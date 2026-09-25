@@ -1,0 +1,23 @@
+[project]
+name = "ai-support-agent"
+version = "0.1.0"
+description = "Учебный AI Support Agent"
+requires-python = ">=3.11"
+dependencies = [
+    "google-genai>=1.0",
+    "mcp[cli]>=2.0",
+    "openai>=1.0",
+    "pypdf>=5.0",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+norecursedirs = ["tmp*"]

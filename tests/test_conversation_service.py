@@ -11,6 +11,7 @@ from ai_support_agent.tools.confirmation_resolver import (
     ConfirmationResolutionResult,
 )
 from ai_support_agent.tools.context import DEMO_TOOL_CONTEXT, ToolExecutionContext
+from ai_support_agent.tools.audit import InMemoryAuditSink
 from ai_support_agent.tools.executor import RegisteredTool, ToolEffect, ToolExecutor
 from ai_support_agent.tools.order_status import (
     CancelOrderArguments,
@@ -66,7 +67,10 @@ def create_cancel_executor(repository: InMemoryOrderRepository) -> ToolExecutor:
     )
 
 
-def create_service(decision: ConfirmationDecision) -> tuple[ConversationService, InMemoryOrderRepository]:
+def create_service(
+    decision: ConfirmationDecision,
+    audit_sink: InMemoryAuditSink | None = None,
+) -> tuple[ConversationService, InMemoryOrderRepository]:
     repository = InMemoryOrderRepository(
         {
             "ORD-1003": StoredOrder(
@@ -79,7 +83,7 @@ def create_service(decision: ConfirmationDecision) -> tuple[ConversationService,
             )
         }
     )
-    pending_store = InMemoryPendingActionStore()
+    pending_store = InMemoryPendingActionStore(audit_sink=audit_sink or InMemoryAuditSink())
     pending_store.create(
         user_id="demo-user-1",
         tool_name="cancel_order",
@@ -123,10 +127,12 @@ def test_rejection_discards_pending_action_without_executing_it() -> None:
 
 
 def test_unclear_reply_keeps_pending_action_unchanged() -> None:
-    service, repository = create_service(ConfirmationDecision.UNCLEAR)
+    audit_sink = InMemoryAuditSink()
+    service, repository = create_service(ConfirmationDecision.UNCLEAR, audit_sink)
 
     result = service.answer("А когда его привезут?")
 
     assert result.response.status.value == "clarification_needed"
     assert repository.find_visible_to("ORD-1003", "demo-user-1").status is OrderStatus.PACKED
     assert service.assistant_service.pending_action_store.find_for_user("demo-user-1") is not None
+    assert audit_sink.events[-1].outcome == "confirmation_unclear"

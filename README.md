@@ -11,6 +11,7 @@
 - RAG по Markdown-политикам и PDF: chunking, embeddings Gemini, локальный векторный индекс, метаданные и source-aware fallback для внешних справочных материалов.
 - Оценка retrieval и ответов: Recall@k, Precision@k, негативные кейсы и проверка источников.
 - Tools: статус заказа, отмена заказа с подтверждением, валидация аргументов, ownership check и идемпотентность.
+- Безопасный audit tool-вызовов: actor, tool, эффект и outcome без raw arguments, prompt-ов или секретов.
 - Agent: planner, ограничение шагов, observations, read-tools, proposal для write-tool и HITL-подтверждение.
 - MCP-сервер: tool поиска по базе знаний, resource с обзором сервиса и prompt-шаблон для поиска по политике.
 
@@ -135,6 +136,8 @@ python -m ai_support_agent.inspect_pdf knowledge/pdf/remote_sales_return.pdf
 `ToolCatalog` — единый реестр tools, их JSON-схем, эффекта (`read`/`write`) и доступа агента. `ToolExecutor` валидирует аргументы, выполняет handler и не доверяет модели права доступа.
 
 Заказы проверяются через `OrderRepository.find_visible_to(order_id, user_id)`. `ToolExecutionContext.current_user_id` создаётся приложением после авторизации и никогда не является аргументом, который придумывает LLM.
+
+`InMemoryPendingActionStore` фиксирует lifecycle write-действия: `proposal_created`, `confirmation_approved`, `confirmation_rejected` или `confirmation_unclear`. После подтверждения `ToolExecutor` создаёт отдельное событие финального выполнения. Пока используется `InMemoryAuditSink`; PostgreSQL-реализация появится на инженерном уровне.
 
 `cancel_order` — write-tool: агент создаёт только предложение действия, затем `ConversationService` ждёт явного подтверждения. После подтверждения используется idempotency key, чтобы повтор не отменил заказ второй раз.
 

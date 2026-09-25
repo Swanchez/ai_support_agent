@@ -96,6 +96,7 @@ class ConversationService:
                 total_tokens=resolution_result.llm_result.total_tokens,
             )
 
+        self.assistant_service.pending_action_store.record_unclear_confirmation(pending)
         return _answer_result(
             status=AnswerStatus.CLARIFICATION_NEEDED,
             answer="Подтвердите или отмените ранее запрошенное действие.",

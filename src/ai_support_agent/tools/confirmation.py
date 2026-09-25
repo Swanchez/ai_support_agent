@@ -5,6 +5,13 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from ai_support_agent.tools.audit import (
+    AuditEventType,
+    AuditSink,
+    NullAuditSink,
+    create_audit_event,
+)
+
 
 @dataclass(frozen=True)
 class PendingToolAction:
@@ -21,6 +28,7 @@ class InMemoryPendingActionStore:
     """Learning-only store; production requires durable storage and expiration."""
 
     _actions: dict[str, PendingToolAction] = field(default_factory=dict)
+    audit_sink: AuditSink = field(default_factory=NullAuditSink)
 
     def create(
         self,
@@ -42,6 +50,7 @@ class InMemoryPendingActionStore:
             arguments=deepcopy(arguments),
         )
         self._actions[action.confirmation_id] = action
+        self._record(action, "proposal_created")
         return action
 
     def find_for_user(self, user_id: str) -> PendingToolAction | None:
@@ -56,6 +65,7 @@ class InMemoryPendingActionStore:
         if action is None or action.user_id != user_id:
             return False
         del self._actions[confirmation_id]
+        self._record(action, "confirmation_rejected")
         return True
 
     def approve_for_user(
@@ -69,4 +79,24 @@ class InMemoryPendingActionStore:
         action = self._actions.get(confirmation_id)
         if action is None or action.user_id != user_id:
             return None
-        return self._actions.pop(confirmation_id)
+        approved = self._actions.pop(confirmation_id)
+        self._record(approved, "confirmation_approved")
+        return approved
+
+    def record_unclear_confirmation(self, action: PendingToolAction) -> None:
+        """Record a non-destructive reply that leaves a pending action in place."""
+
+        self._record(action, "confirmation_unclear")
+
+    def _record(self, action: PendingToolAction, outcome: str) -> None:
+        """Write confirmation lifecycle metadata without storing action arguments."""
+
+        self.audit_sink.record(
+            create_audit_event(
+                actor_id=action.user_id,
+                tool_name=action.tool_name,
+                tool_effect="write",
+                event_type=AuditEventType.CONFIRMATION,
+                outcome=outcome,
+            )
+        )

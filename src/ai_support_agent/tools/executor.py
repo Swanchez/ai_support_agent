@@ -1,7 +1,7 @@
 """Trusted execution boundary for model-requested application tools."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -12,6 +12,7 @@ from ai_support_agent.tools.catalog import (
     ToolCatalog,
     ToolEffect,
 )
+from ai_support_agent.tools.audit import AuditSink, NullAuditSink, create_audit_event
 from ai_support_agent.tools.context import ToolExecutionContext
 from ai_support_agent.tools.default_catalog import DEFAULT_TOOL_CATALOG
 
@@ -53,6 +54,7 @@ class ToolExecutor:
     """Validates requests and invokes only tools present in its explicit registry."""
 
     registry: Mapping[str, RegisteredTool]
+    audit_sink: AuditSink = field(default_factory=NullAuditSink)
 
     def definitions(self) -> list[dict[str, object]]:
         """Return the public tool descriptions that may be sent to an LLM provider."""
@@ -103,24 +105,51 @@ class ToolExecutor:
 
         validation = self.validate_arguments(tool_name, raw_arguments)
         if validation.failure is not None:
-            return validation.failure.model_dump(mode="json")
+            result = validation.failure.model_dump(mode="json")
+            self._record_outcome(tool_name, context, None, result)
+            return result
 
         tool = self.registry[tool_name]
 
         if tool.effect is ToolEffect.WRITE and not confirmation_granted:
-            return ExecutorFailure(
+            result = ExecutorFailure(
                 code=ExecutorErrorCode.CONFIRMATION_REQUIRED,
                 message="This action requires explicit user confirmation.",
             ).model_dump(mode="json")
+            self._record_outcome(tool_name, context, tool.effect, result)
+            return result
 
         if tool.effect is ToolEffect.WRITE and not context.idempotency_key:
-            return ExecutorFailure(
+            result = ExecutorFailure(
                 code=ExecutorErrorCode.IDEMPOTENCY_KEY_REQUIRED,
                 message="Write actions require an application-generated idempotency key.",
             ).model_dump(mode="json")
+            self._record_outcome(tool_name, context, tool.effect, result)
+            return result
 
         assert validation.arguments is not None
-        return tool.handler(validation.arguments, context).model_dump(mode="json")
+        result = tool.handler(validation.arguments, context).model_dump(mode="json")
+        self._record_outcome(tool_name, context, tool.effect, result)
+        return result
+
+    def _record_outcome(
+        self,
+        tool_name: str,
+        context: ToolExecutionContext,
+        effect: ToolEffect | None,
+        result: Mapping[str, Any],
+    ) -> None:
+        """Record one safe outcome after every execution attempt."""
+
+        outcome = "success" if result.get("ok") is True else str(result["code"])
+        self.audit_sink.record(
+            create_audit_event(
+                actor_id=context.current_user_id,
+                tool_name=tool_name,
+                tool_effect=effect.value if effect is not None else None,
+                outcome=outcome,
+            )
+        )
 
 
 DEFAULT_TOOL_EXECUTOR = ToolExecutor(

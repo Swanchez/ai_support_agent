@@ -9,6 +9,7 @@ from ai_support_agent.tools.executor import (
     ToolEffect,
     ToolExecutor,
 )
+from ai_support_agent.tools.audit import InMemoryAuditSink
 from ai_support_agent.tools.context import DEMO_TOOL_CONTEXT, ToolExecutionContext
 from ai_support_agent.tools.order_status import GetOrderStatusArguments, OrderStatusSuccess
 
@@ -147,3 +148,41 @@ def test_executor_blocks_write_tool_until_application_confirms_it() -> None:
 
     assert completed["ok"] is True
     assert called is True
+
+
+def test_executor_audits_safe_outcome_without_raw_arguments() -> None:
+    audit_sink = InMemoryAuditSink()
+    executor = ToolExecutor(
+        DEFAULT_TOOL_EXECUTOR.registry,
+        audit_sink=audit_sink,
+    )
+
+    result = executor.execute(
+        "get_order_status",
+        {"order_id": "ORD-1002"},
+        DEMO_TOOL_CONTEXT,
+    )
+
+    assert result["code"] == "order_not_found"
+    assert len(audit_sink.events) == 1
+    event = audit_sink.events[0]
+    assert event.actor_id == "demo-user-1"
+    assert event.tool_name == "get_order_status"
+    assert event.tool_effect == "read"
+    assert event.outcome == "order_not_found"
+    assert not hasattr(event, "arguments")
+
+
+def test_executor_audits_rejected_tool_before_execution() -> None:
+    audit_sink = InMemoryAuditSink()
+    executor = ToolExecutor(
+        DEFAULT_TOOL_EXECUTOR.registry,
+        audit_sink=audit_sink,
+    )
+
+    executor.execute("delete_all_orders", {}, DEMO_TOOL_CONTEXT)
+
+    assert audit_sink.events[0].actor_id == "demo-user-1"
+    assert audit_sink.events[0].tool_name == "delete_all_orders"
+    assert audit_sink.events[0].tool_effect is None
+    assert audit_sink.events[0].outcome == ExecutorErrorCode.TOOL_NOT_ALLOWED

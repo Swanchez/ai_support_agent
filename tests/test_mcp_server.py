@@ -140,6 +140,33 @@ def test_authenticated_mcp_server_returns_status_only_for_context_owner() -> Non
     asyncio.run(run())
 
 
+def test_mcp_server_returns_protocol_error_for_unknown_tool() -> None:
+    async def run() -> None:
+        async with Client(create_support_mcp_server(StubRetriever())) as client:
+            result = await client.call_tool("unknown_tool", {})
+
+        assert result.is_error is True
+        assert result.structured_content is None
+        assert result.content
+
+    asyncio.run(run())
+
+
+def test_mcp_server_returns_protocol_error_for_invalid_tool_arguments() -> None:
+    async def run() -> None:
+        async with Client(create_support_mcp_server(StubRetriever())) as client:
+            result = await client.call_tool(
+                "search_knowledge_base",
+                {"query": 123},
+            )
+
+        assert result.is_error is True
+        assert result.structured_content is None
+        assert result.content
+
+    asyncio.run(run())
+
+
 def test_mcp_server_includes_diagnostics_only_when_requested() -> None:
     retriever = StubRetriever()
 

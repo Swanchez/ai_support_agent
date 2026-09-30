@@ -1,10 +1,12 @@
 import pytest
 
 from ai_support_agent.config import (
+    DatabaseConfig,
     GeminiEmbeddingConfig,
     GeminiConfig,
     LlmProvider,
     load_gemini_embedding_config,
+    load_database_config,
     OpenAiConfig,
     load_gemini_config,
     load_llm_provider,
@@ -63,6 +65,39 @@ def test_load_gemini_embedding_config_returns_required_settings() -> None:
     assert config == GeminiEmbeddingConfig(
         api_key="test-key", model="test-embedding-model"
     )
+
+
+def test_load_database_config_returns_connection_settings() -> None:
+    config = load_database_config(
+        {
+            "POSTGRES_DB": "support",
+            "POSTGRES_USER": "app_user",
+            "POSTGRES_PASSWORD": "test-password",
+            "DATABASE_HOST": "db.internal",
+            "DATABASE_PORT": "5433",
+        }
+    )
+
+    assert config == DatabaseConfig(
+        host="db.internal",
+        port=5433,
+        database="support",
+        user="app_user",
+        password="test-password",
+    )
+
+
+@pytest.mark.parametrize("value", ["", "not-a-number", "0", "65536"])
+def test_load_database_config_rejects_an_invalid_port(value: str) -> None:
+    env = {
+        "POSTGRES_DB": "support",
+        "POSTGRES_USER": "app_user",
+        "POSTGRES_PASSWORD": "test-password",
+        "DATABASE_PORT": value,
+    }
+
+    with pytest.raises(ConfigurationError, match="DATABASE_PORT"):
+        load_database_config(env)
 
 
 @pytest.mark.parametrize("missing_name", ["GEMINI_API_KEY", "GEMINI_MODEL"])

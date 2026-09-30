@@ -11,7 +11,9 @@ from ai_support_agent.tools.catalog import (
 from ai_support_agent.tools.context import ToolExecutionContext
 from ai_support_agent.tools.order_status import (
     CancelOrderArguments,
+    DEMO_ORDER_REPOSITORY,
     GetOrderStatusArguments,
+    OrderRepository,
     cancel_order,
     cancel_order_tool_definition,
     get_order_status,
@@ -19,45 +21,47 @@ from ai_support_agent.tools.order_status import (
 )
 
 
-def _handle_get_order_status(
-    arguments: BaseModel,
-    context: ToolExecutionContext,
-) -> BaseModel:
-    """Adapt the executor's generic boundary to the typed order-status handler."""
+def create_tool_catalog(order_repository: OrderRepository) -> ToolCatalog:
+    """Build the same allowed tools around one chosen order-data implementation."""
 
-    return get_order_status(
-        GetOrderStatusArguments.model_validate(arguments),
-        current_user_id=context.current_user_id,
+    def handle_get_order_status(
+        arguments: BaseModel,
+        context: ToolExecutionContext,
+    ) -> BaseModel:
+        return get_order_status(
+            GetOrderStatusArguments.model_validate(arguments),
+            current_user_id=context.current_user_id,
+            repository=order_repository,
+        )
+
+    def handle_cancel_order(
+        arguments: BaseModel,
+        context: ToolExecutionContext,
+    ) -> BaseModel:
+        return cancel_order(
+            CancelOrderArguments.model_validate(arguments),
+            current_user_id=context.current_user_id,
+            idempotency_key=context.idempotency_key,
+            repository=order_repository,
+        )
+
+    return ToolCatalog(
+        tools={
+            "get_order_status": RegisteredTool(
+                definition=get_order_status_tool_definition(),
+                arguments_model=GetOrderStatusArguments,
+                handler=handle_get_order_status,
+                agent_access=AgentToolAccess.READ,
+            ),
+            "cancel_order": RegisteredTool(
+                definition=cancel_order_tool_definition(),
+                arguments_model=CancelOrderArguments,
+                handler=handle_cancel_order,
+                effect=ToolEffect.WRITE,
+                agent_access=AgentToolAccess.PROPOSAL,
+            ),
+        }
     )
 
 
-def _handle_cancel_order(
-    arguments: BaseModel,
-    context: ToolExecutionContext,
-) -> BaseModel:
-    """Call the write handler only after executor confirmation and idempotency gates."""
-
-    return cancel_order(
-        CancelOrderArguments.model_validate(arguments),
-        current_user_id=context.current_user_id,
-        idempotency_key=context.idempotency_key,
-    )
-
-
-DEFAULT_TOOL_CATALOG = ToolCatalog(
-    tools={
-        "get_order_status": RegisteredTool(
-            definition=get_order_status_tool_definition(),
-            arguments_model=GetOrderStatusArguments,
-            handler=_handle_get_order_status,
-            agent_access=AgentToolAccess.READ,
-        ),
-        "cancel_order": RegisteredTool(
-            definition=cancel_order_tool_definition(),
-            arguments_model=CancelOrderArguments,
-            handler=_handle_cancel_order,
-            effect=ToolEffect.WRITE,
-            agent_access=AgentToolAccess.PROPOSAL,
-        ),
-    }
-)
+DEFAULT_TOOL_CATALOG = create_tool_catalog(DEMO_ORDER_REPOSITORY)

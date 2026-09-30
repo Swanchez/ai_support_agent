@@ -23,6 +23,7 @@ class ToolErrorCode(StrEnum):
     ORDER_NOT_FOUND = "order_not_found"
     ORDER_CANNOT_BE_CANCELLED = "order_cannot_be_cancelled"
     ORDER_SERVICE_UNAVAILABLE = "order_service_unavailable"
+    IDEMPOTENCY_KEY_CONFLICT = "idempotency_key_conflict"
 
 
 class GetOrderStatusArguments(BaseModel):
@@ -83,16 +84,30 @@ class OrderStatusFailure(BaseModel):
 
 OrderStatusResult: TypeAlias = OrderStatusSuccess | OrderStatusFailure
 
+CANCELLABLE_ORDER_STATUSES = frozenset({OrderStatus.PROCESSING, OrderStatus.PACKED})
+
 
 class OrderRepositoryUnavailable(RuntimeError):
     """The backing order service could not be reached temporarily."""
 
 
-class OrderRepository(Protocol):
-    """Dependency boundary for a future database or order-service API."""
+class IdempotencyKeyConflict(RuntimeError):
+    """One key was reused for a request with different arguments."""
+
+
+class OrderCancellationNotAllowed(RuntimeError):
+    """The order changed state after the pre-check and can no longer be cancelled."""
+
+
+class VisibleOrderRepository(Protocol):
+    """Read boundary that exposes an order only to its authenticated owner."""
 
     def find_visible_to(self, order_id: str, user_id: str) -> OrderStatusData | None:
         """Return an order only when it belongs to the authenticated user."""
+
+
+class OrderRepository(VisibleOrderRepository, Protocol):
+    """Full order boundary used by confirmation-gated write operations."""
 
     def cancel_visible_to(
         self,
@@ -106,6 +121,7 @@ class OrderRepository(Protocol):
         self,
         user_id: str,
         idempotency_key: str,
+        order_id: str,
     ) -> OrderStatusData | None:
         """Return the earlier successful cancellation for one idempotency key."""
 
@@ -131,10 +147,14 @@ class InMemoryOrderRepository:
     ) -> OrderStatusData | None:
         previous_result = self.cancellation_results.get((user_id, idempotency_key))
         if previous_result is not None:
+            if previous_result.order_id != order_id:
+                raise IdempotencyKeyConflict("Idempotency key belongs to another order.")
             return previous_result
         order = self.orders.get(order_id)
         if order is None or order.owner_user_id != user_id:
             return None
+        if order.data.status not in CANCELLABLE_ORDER_STATUSES:
+            raise OrderCancellationNotAllowed("Order cannot be cancelled in its current status.")
         cancelled = order.data.model_copy(update={"status": OrderStatus.CANCELLED})
         self.orders[order_id] = StoredOrder(order.owner_user_id, cancelled)
         self.cancellation_results[(user_id, idempotency_key)] = cancelled
@@ -144,8 +164,12 @@ class InMemoryOrderRepository:
         self,
         user_id: str,
         idempotency_key: str,
+        order_id: str,
     ) -> OrderStatusData | None:
-        return self.cancellation_results.get((user_id, idempotency_key))
+        previous_result = self.cancellation_results.get((user_id, idempotency_key))
+        if previous_result is not None and previous_result.order_id != order_id:
+            raise IdempotencyKeyConflict("Idempotency key belongs to another order.")
+        return previous_result
 
 
 DEMO_ORDER_REPOSITORY = InMemoryOrderRepository(
@@ -182,7 +206,7 @@ DEMO_ORDER_REPOSITORY = InMemoryOrderRepository(
 def get_order_status(
     arguments: GetOrderStatusArguments,
     current_user_id: str,
-    repository: OrderRepository = DEMO_ORDER_REPOSITORY,
+    repository: VisibleOrderRepository = DEMO_ORDER_REPOSITORY,
 ) -> OrderStatusResult:
     """Look up a validated order only within the authenticated user's visibility."""
 
@@ -216,6 +240,7 @@ def cancel_order(
         previous_result = repository.find_cancellation_result(
             current_user_id,
             idempotency_key,
+            arguments.order_id,
         )
         if previous_result is not None:
             return OrderStatusSuccess(order=previous_result)
@@ -226,7 +251,7 @@ def cancel_order(
                 message="Order was not found.",
                 retryable=False,
             )
-        if order.status not in {OrderStatus.PROCESSING, OrderStatus.PACKED}:
+        if order.status not in CANCELLABLE_ORDER_STATUSES:
             return OrderStatusFailure(
                 code=ToolErrorCode.ORDER_CANNOT_BE_CANCELLED,
                 message="Order cannot be cancelled in its current status.",
@@ -236,6 +261,18 @@ def cancel_order(
             arguments.order_id,
             current_user_id,
             idempotency_key,
+        )
+    except IdempotencyKeyConflict:
+        return OrderStatusFailure(
+            code=ToolErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+            message="Idempotency key conflicts with another request.",
+            retryable=False,
+        )
+    except OrderCancellationNotAllowed:
+        return OrderStatusFailure(
+            code=ToolErrorCode.ORDER_CANNOT_BE_CANCELLED,
+            message="Order cannot be cancelled in its current status.",
+            retryable=False,
         )
     except OrderRepositoryUnavailable:
         return OrderStatusFailure(

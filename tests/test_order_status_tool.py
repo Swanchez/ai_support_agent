@@ -157,6 +157,45 @@ def test_cancel_order_returns_the_original_result_when_idempotency_key_repeats()
     assert repeated == first
 
 
+def test_cancel_order_rejects_reusing_a_key_for_another_order() -> None:
+    repository = InMemoryOrderRepository(
+        {
+            "ORD-1003": StoredOrder(
+                owner_user_id="demo-user-1",
+                data=OrderStatusData(
+                    order_id="ORD-1003",
+                    status=OrderStatus.PACKED,
+                    updated_at="2026-09-22",
+                ),
+            ),
+            "ORD-1004": StoredOrder(
+                owner_user_id="demo-user-1",
+                data=OrderStatusData(
+                    order_id="ORD-1004",
+                    status=OrderStatus.PACKED,
+                    updated_at="2026-09-22",
+                ),
+            ),
+        }
+    )
+    cancel_order(
+        CancelOrderArguments(order_id="ORD-1003"),
+        current_user_id="demo-user-1",
+        idempotency_key="confirmation-1",
+        repository=repository,
+    )
+
+    result = cancel_order(
+        CancelOrderArguments(order_id="ORD-1004"),
+        current_user_id="demo-user-1",
+        idempotency_key="confirmation-1",
+        repository=repository,
+    )
+
+    assert isinstance(result, OrderStatusFailure)
+    assert result.code is ToolErrorCode.IDEMPOTENCY_KEY_CONFLICT
+
+
 def test_cancel_order_definition_keeps_its_own_argument_contract() -> None:
     definition = cancel_order_tool_definition()
 

@@ -43,6 +43,9 @@ src/ai_support_agent/
   agents/       # planner, runtime, observations, evaluation и trace
   rag/          # документы, chunking, embeddings, индекс, retrieval, evaluation
   tools/        # каталог, executor, контекст, заказы, confirmation flow
+  persistence/  # SQLAlchemy-модели, PostgreSQL-репозитории, seed-скрипты, audit adapter
+  security/     # Argon2-хеширование паролей, JWT и authentication service
+  web/          # FastAPI HTTP-адаптер и точка сборки web-приложения
   mcp_server.py # MCP primitives и stdio entry point
   mcp_client.py # клиент, запускающий локальный MCP-сервер
   *_cli.py      # учебные консольные точки входа
@@ -79,6 +82,58 @@ GEMINI_EMBEDDING_MODEL=gemini-embedding-2
 
 LLM-вызовы и создание embeddings могут расходовать квоту провайдера. Unit-тесты используют заглушки и не должны обращаться к API; ручные CLI-команды и evaluation-команды — могут.
 
+### Локальная PostgreSQL через Docker
+
+`compose.yaml` поднимает PostgreSQL 17 в контейнере `db`. Данные находятся в
+именованном Docker volume `postgres_data`, а порт опубликован только на
+`127.0.0.1:5432`, поэтому база не доступна из локальной сети.
+
+Добавь в существующий локальный `.env` значения из блока `POSTGRES_*` файла
+`.env.example`, заменив `POSTGRES_PASSWORD` на собственный пароль. Затем:
+
+```powershell
+docker compose up -d db
+docker compose ps
+docker compose logs db
+```
+
+После статуса `healthy` можно открыть клиент PostgreSQL внутри контейнера:
+
+```powershell
+docker compose exec db psql -U ai_support_agent -d ai_support_agent
+```
+
+Полезные команды `psql`: `\conninfo` — проверить подключение, `\dt` — список
+таблиц, `\d имя_таблицы` — структура таблицы, `\q` — выход. Для диагностики
+можно выполнять `SELECT`; изменение схемы вручную не используем — далее она
+будет контролироваться миграциями Alembic.
+
+`docker compose down` останавливает и удаляет контейнер, но сохраняет volume с
+данными. `docker compose down -v` удаляет и volume: это полное удаление локальной
+базы, применять его можно только осознанно.
+
+Проверка подключения из Python после установки зависимостей проекта:
+
+```powershell
+python -m ai_support_agent.persistence.check_connection
+```
+
+Миграции схемы хранятся в `migrations/` и управляются Alembic. После изменения
+SQLAlchemy-моделей создай черновик миграции, проверь его и только затем примени:
+
+```powershell
+alembic revision --autogenerate -m "создать таблицу заказов"
+alembic upgrade head
+```
+
+После применения миграции можно отдельно наполнить **только локальную** БД
+учебными заказами. Seed использует `ON CONFLICT DO NOTHING`, поэтому повторный
+запуск не создаёт дубликаты и не перезаписывает существующие строки:
+
+```powershell
+python -m ai_support_agent.persistence.seed_demo_orders
+```
+
 ## Основные команды
 
 Запуск основного диалога:
@@ -98,6 +153,53 @@ python -m ai_support_agent.agent_cli --debug
 ```powershell
 python -m pytest -q
 ```
+
+### Web API, PostgreSQL и аутентификация
+
+FastAPI запускается в режиме разработки так:
+
+```powershell
+uvicorn ai_support_agent.web.main:create_production_app --factory --reload
+```
+
+Swagger для разработчика доступен по адресу `http://127.0.0.1:8000/docs`.
+Обычный пользователь в будущем будет работать через отдельный web-интерфейс, а не через Swagger.
+
+Перед запуском подними локальную PostgreSQL и подготовь схему:
+
+```powershell
+docker compose up -d db
+alembic upgrade head
+python -m ai_support_agent.persistence.seed_demo_orders
+python -m ai_support_agent.persistence.seed_demo_users
+```
+
+Для JWT в локальном `.env` нужны следующие настройки. Секрет генерируется один раз, не коммитится и не выводится в логи:
+
+```dotenv
+AUTH_JWT_SECRET=at-least-32-random-characters
+AUTH_JWT_ISSUER=ai-support-agent
+AUTH_ACCESS_TOKEN_TTL_MINUTES=30
+AUTH_COOKIE_SECURE=false
+```
+
+`AUTH_COOKIE_SECURE=false` допустим только в локальной HTTP-разработке. При реальном HTTPS-развёртывании он обязан быть `true`.
+
+| Endpoint | Назначение | Защита |
+| --- | --- | --- |
+| `GET /health` | Проверка доступности процесса | не требует аутентификации |
+| `POST /api/v1/auth/token` | Получить Bearer JWT для Swagger или внешнего клиента | логин и пароль |
+| `POST /api/v1/auth/login` | Browser-login с `HttpOnly` cookie | логин и пароль |
+| `POST /api/v1/auth/logout` | Удалить browser cookie | JWT/cookie + CSRF |
+| `POST /api/v1/chat` | Задать вопрос LLM/RAG | JWT/cookie |
+| `GET /api/v1/orders/{order_id}` | Получить только свой заказ | JWT/cookie + ownership check |
+| `POST /api/v1/orders/{order_id}/cancellation` | Выполнить подтверждённую отмену | JWT/cookie + ownership + idempotency; cookie-вариант также CSRF |
+
+Для тестовых аккаунтов после seed-скрипта доступны `demo-user-1` / `demo-password-1` и `demo-user-2` / `demo-password-2`. Это только локальные учебные данные.
+
+В browser-варианте `/auth/login` выставляет две cookie: `support_access_token` с флагом `HttpOnly` и `support_csrf_token`. JavaScript будущего UI не увидит JWT, но сможет передать CSRF-токен в `X-CSRF-Token` для write-запроса. Bearer-клиенты передают JWT явно и не нуждаются в CSRF-проверке.
+
+Заказы, результаты идемпотентных операций и безопасные audit-события сохраняются в PostgreSQL. Audit не хранит prompt, аргументы tools, пароли, ключи или JWT. Если audit backend временно недоступен, `BestEffortAuditSink` записывает техническое предупреждение и не подменяет уже успешный результат операции ошибкой.
 
 ### RAG и оценки
 
@@ -137,7 +239,7 @@ python -m ai_support_agent.inspect_pdf knowledge/pdf/remote_sales_return.pdf
 
 Заказы проверяются через `OrderRepository.find_visible_to(order_id, user_id)`. `ToolExecutionContext.current_user_id` создаётся приложением после авторизации и никогда не является аргументом, который придумывает LLM.
 
-`InMemoryPendingActionStore` фиксирует lifecycle write-действия: `proposal_created`, `confirmation_approved`, `confirmation_rejected` или `confirmation_unclear`. После подтверждения `ToolExecutor` создаёт отдельное событие финального выполнения. Пока используется `InMemoryAuditSink`; PostgreSQL-реализация появится на инженерном уровне.
+`InMemoryPendingActionStore` фиксирует lifecycle write-действия в учебном диалоговом сценарии: `proposal_created`, `confirmation_approved`, `confirmation_rejected` или `confirmation_unclear`. После подтверждения `ToolExecutor` создаёт отдельное событие финального выполнения. Для production-композиции используется `PostgresAuditSink`, обёрнутый в `BestEffortAuditSink`: сбой аудита логируется, но не отменяет уже успешно выполненное действие. `InMemoryAuditSink` остаётся удобной реализацией для тестов.
 
 `cancel_order` — write-tool: агент создаёт только предложение действия, затем `ConversationService` ждёт явного подтверждения. После подтверждения используется idempotency key, чтобы повтор не отменил заказ второй раз.
 
@@ -187,7 +289,7 @@ python -m ai_support_agent.mcp_cli
 
 ## Текущие ограничения и следующий этап
 
-- Данные заказов и pending confirmations пока хранятся в памяти и предназначены для обучения.
-- `DEMO_TOOL_CONTEXT` не является настоящей пользовательской аутентификацией.
+- Заказы, идемпотентные результаты и audit-события уже хранятся в PostgreSQL. Pending-confirmation сценарий агента пока остаётся in-memory: для долгоживущих диалогов ему понадобится отдельное persistent-хранилище.
+- HTTP API использует JWT и проверяет владельца заказа. Следующим шагом будет пользовательский веб-интерфейс: он скроет технические токены за обычным входом в аккаунт.
 - Локальный MCP использует `stdio`; удалённый многопользовательский MCP потребует HTTPS, проверку токенов и request-scoped context.
 - Веб-интерфейс, реальная БД/Order API, авторизация и развёртывание будут следующими адаптерами поверх текущего ядра, а не переписыванием RAG/tools/agents с нуля.

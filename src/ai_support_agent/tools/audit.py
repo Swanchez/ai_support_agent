@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+import logging
 from typing import Protocol
 
 
@@ -27,10 +28,14 @@ class AuditEvent:
 
 
 class AuditSink(Protocol):
-    """Storage boundary for audit events; a database implementation comes later."""
+    """Storage boundary for already-sanitized audit events."""
 
     def record(self, event: AuditEvent) -> None:
         """Persist or forward one safe event."""
+
+
+class AuditSinkUnavailable(RuntimeError):
+    """The configured audit backend could not accept a safe event."""
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,23 @@ class InMemoryAuditSink:
         """Append one event in execution order."""
 
         self.events.append(event)
+
+
+@dataclass(frozen=True)
+class BestEffortAuditSink:
+    """Keep an audit outage from misreporting an already completed operation."""
+
+    delegate: AuditSink
+
+    def record(self, event: AuditEvent) -> None:
+        """Try to record once and emit a technical warning when storage is unavailable."""
+
+        try:
+            self.delegate.record(event)
+        except AuditSinkUnavailable:
+            logging.getLogger(__name__).warning(
+                "Audit event was not persisted because audit storage is unavailable."
+            )
 
 
 def create_audit_event(

@@ -61,6 +61,52 @@ def test_postgres_repository_returns_none_without_revealing_nonvisible_orders() 
     assert repository.find_visible_to("ORD-1002", "demo-user-1") is None
 
 
+def test_postgres_repository_lists_only_owned_orders() -> None:
+    first = OrderRecord(
+        id="ORD-1003",
+        user_id="demo-user-1",
+        status="packed",
+        estimated_delivery_at=None,
+        updated_at=datetime(2026, 9, 22, tzinfo=UTC),
+    )
+    second = OrderRecord(
+        id="ORD-1001",
+        user_id="demo-user-1",
+        status="shipped",
+        estimated_delivery_at=date(2026, 9, 24),
+        updated_at=datetime(2026, 9, 20, tzinfo=UTC),
+    )
+
+    @dataclass
+    class ScalarsResult:
+        records: list[OrderRecord]
+
+        def all(self) -> list[OrderRecord]:
+            return self.records
+
+    @dataclass
+    class ListSession:
+        statement: object | None = None
+
+        def __enter__(self) -> "ListSession":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            _ = args
+
+        def scalars(self, statement: object) -> ScalarsResult:
+            self.statement = statement
+            return ScalarsResult([first, second])
+
+    session = ListSession()
+    repository = PostgresOrderRepository(lambda: session)  # type: ignore[arg-type]
+
+    orders = repository.list_visible_to("demo-user-1")
+
+    assert [order.order_id for order in orders] == ["ORD-1003", "ORD-1001"]
+    assert "orders.user_id = :user_id_1" in str(session.statement)
+
+
 def test_postgres_repository_wraps_database_failures_in_the_tool_boundary() -> None:
     @dataclass
     class UnavailableSession:

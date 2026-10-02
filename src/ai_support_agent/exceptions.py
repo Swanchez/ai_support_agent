@@ -26,6 +26,10 @@ class OrderCancellationConflictError(RuntimeError):
     """An order cannot be cancelled in its current state or with this retry key."""
 
 
+class ConversationNotFoundError(RuntimeError):
+    """A conversation is absent or does not belong to the authenticated user."""
+
+
 class InvalidAccessTokenError(RuntimeError):
     """A bearer token cannot establish a trusted application identity."""
 

@@ -70,6 +70,7 @@ def create_cancel_executor(repository: InMemoryOrderRepository) -> ToolExecutor:
 def create_service(
     decision: ConfirmationDecision,
     audit_sink: InMemoryAuditSink | None = None,
+    order_status: OrderStatus = OrderStatus.PACKED,
 ) -> tuple[ConversationService, InMemoryOrderRepository]:
     repository = InMemoryOrderRepository(
         {
@@ -77,7 +78,7 @@ def create_service(
                 "demo-user-1",
                 OrderStatusData(
                     order_id="ORD-1003",
-                    status=OrderStatus.PACKED,
+                    status=order_status,
                     updated_at="2026-09-22",
                 ),
             )
@@ -136,3 +137,15 @@ def test_unclear_reply_keeps_pending_action_unchanged() -> None:
     assert repository.find_visible_to("ORD-1003", "demo-user-1").status is OrderStatus.PACKED
     assert service.assistant_service.pending_action_store.find_for_user("demo-user-1") is not None
     assert audit_sink.events[-1].outcome == "confirmation_unclear"
+
+
+def test_confirmation_reports_when_the_order_can_no_longer_be_cancelled() -> None:
+    service, _ = create_service(
+        ConfirmationDecision.CONFIRM,
+        order_status=OrderStatus.CANCELLED,
+    )
+
+    result = service.answer("Подтверждаю")
+
+    assert result.response.status.value == "insufficient_context"
+    assert result.response.answer == "Заказ уже нельзя отменить в текущем статусе."

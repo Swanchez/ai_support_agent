@@ -77,6 +77,20 @@ class OrderStatusAgentTool:
         return AgentToolResult(data=result, source_ids=("get_order_status",))
 
 
+@dataclass
+class MyOrdersAgentTool:
+    """Expose the ownership-scoped order list as a read-only agent observation."""
+
+    executor: ToolExecutor
+    context: ToolExecutionContext
+
+    def execute(self, arguments: dict[str, Any]) -> AgentToolResult:
+        """Run the no-filter listing tool through the usual execution boundary."""
+
+        result = self.executor.execute("get_my_orders", arguments, self.context)
+        return AgentToolResult(data=result, source_ids=("get_my_orders",))
+
+
 def search_knowledge_base_tool_definition() -> dict[str, object]:
     """Describe the bounded RAG search action for a provider-specific agent planner."""
 

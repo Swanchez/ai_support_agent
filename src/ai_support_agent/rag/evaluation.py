@@ -46,12 +46,16 @@ DEFAULT_RETRIEVAL_CASES: tuple[RetrievalCase, ...] = (
         frozenset({"refund-policy-v1"}),
     ),
     RetrievalCase(
+        "Какие правила возврата товаров предусмотрены в магазине?",
+        frozenset({"refund-policy-v1"}),
+    ),
+    RetrievalCase(
         "Как долго везут заказ?",
         frozenset({"delivery-policy-v1"}),
     ),
     RetrievalCase(
         "Как поменять адрес доставки?",
-        frozenset(),
+        frozenset({"delivery-policy-v1"}),
     ),
 )
 

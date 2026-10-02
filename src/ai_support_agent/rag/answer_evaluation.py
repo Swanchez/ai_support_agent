@@ -42,7 +42,8 @@ DEFAULT_ANSWER_EVALUATION_CASES: tuple[AnswerEvaluationCase, ...] = (
     AnswerEvaluationCase(
         question="Как поменять адрес доставки?",
         expected_status=AnswerStatus.INSUFFICIENT_CONTEXT,
-        expected_source_ids=frozenset(),
+        expected_source_ids=frozenset({"delivery-policy-v1"}),
+        required_phrases=("нет точной процедуры",),
     ),
     AnswerEvaluationCase(
         question="В течение какого срока можно обменять непродовольственный товар?",

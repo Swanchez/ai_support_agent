@@ -5,11 +5,15 @@ from ai_support_agent.tools.order_status import (
     CancelOrderArguments,
     DEMO_ORDER_REPOSITORY,
     GetOrderStatusArguments,
+    ListMyOrdersArguments,
     OrderRepositoryUnavailable,
     OrderStatus,
     OrderStatusFailure,
     OrderStatusSuccess,
+    OrderListSuccess,
     OrderStatusData,
+    RequestReturnArguments,
+    ReturnRequestSuccess,
     StoredOrder,
     ToolErrorCode,
     InMemoryOrderRepository,
@@ -17,6 +21,9 @@ from ai_support_agent.tools.order_status import (
     cancel_order_tool_definition,
     get_order_status,
     get_order_status_tool_definition,
+    get_my_orders,
+    get_my_orders_tool_definition,
+    request_return,
 )
 
 
@@ -29,6 +36,38 @@ def test_get_order_status_returns_raw_structured_data_for_a_known_order() -> Non
     assert isinstance(result, OrderStatusSuccess)
     assert result.order.status is OrderStatus.SHIPPED
     assert result.order.estimated_delivery == "2026-09-24"
+
+
+def test_request_return_creates_one_request_only_for_a_delivered_owned_order() -> None:
+    repository = InMemoryOrderRepository(
+        {"ORD-1004": StoredOrder("demo-user-1", OrderStatusData(order_id="ORD-1004", status=OrderStatus.DELIVERED, updated_at="2026-09-18"))}
+    )
+
+    result = request_return(
+        RequestReturnArguments(order_id="ORD-1004", reason="Не подошёл размер"),
+        "demo-user-1",
+        "return-key-1",
+        repository,
+    )
+
+    assert isinstance(result, ReturnRequestSuccess)
+    assert result.return_request.order_id == "ORD-1004"
+
+
+def test_request_return_rejects_an_order_that_has_not_been_delivered() -> None:
+    repository = InMemoryOrderRepository(
+        {"ORD-1001": StoredOrder("demo-user-1", OrderStatusData(order_id="ORD-1001", status=OrderStatus.SHIPPED, updated_at="2026-09-20"))}
+    )
+
+    result = request_return(
+        RequestReturnArguments(order_id="ORD-1001", reason="Не подошёл размер"),
+        "demo-user-1",
+        "return-key-1",
+        repository,
+    )
+
+    assert isinstance(result, OrderStatusFailure)
+    assert result.code is ToolErrorCode.ORDER_NOT_ELIGIBLE_FOR_RETURN
 
 
 def test_get_order_status_returns_a_non_retryable_not_found_result() -> None:
@@ -67,6 +106,20 @@ def test_get_order_status_hides_another_users_order_as_not_found() -> None:
 
     assert isinstance(result, OrderStatusFailure)
     assert result.code is ToolErrorCode.ORDER_NOT_FOUND
+
+
+def test_get_my_orders_returns_only_the_authenticated_users_orders() -> None:
+    result = get_my_orders(ListMyOrdersArguments(), current_user_id="demo-user-1")
+
+    assert isinstance(result, OrderListSuccess)
+    assert [order.order_id for order in result.orders] == ["ORD-1001", "ORD-1003", "ORD-1004"]
+
+
+def test_get_my_orders_definition_has_no_model_controlled_filters() -> None:
+    definition = get_my_orders_tool_definition()
+
+    assert definition["name"] == "get_my_orders"
+    assert definition["parameters"] == ListMyOrdersArguments.model_json_schema()
 
 
 @pytest.mark.parametrize("order_id", ["1001", "ORD-ABC", "ORD-1001-extra"])

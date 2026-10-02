@@ -1,7 +1,12 @@
 from dataclasses import dataclass
 
 from ai_support_agent.agent_assistant_service import AgentAssistantService
-from ai_support_agent.agents.core import AgentActionProposal, AgentRunResult, AgentState
+from ai_support_agent.agents.core import (
+    AgentActionProposal,
+    AgentConversationMessage,
+    AgentRunResult,
+    AgentState,
+)
 from ai_support_agent.schemas import AnswerStatus, SupportResponse
 from ai_support_agent.tools.confirmation import InMemoryPendingActionStore
 from ai_support_agent.tools.context import DEMO_TOOL_CONTEXT
@@ -12,8 +17,13 @@ from ai_support_agent.tools.executor import DEFAULT_TOOL_EXECUTOR
 class StubAgentRunner:
     result: AgentRunResult
 
-    def run(self, user_question: str) -> AgentRunResult:
-        _ = user_question
+    def run(
+        self,
+        user_question: str,
+        *,
+        history: tuple[AgentConversationMessage, ...] = (),
+    ) -> AgentRunResult:
+        _ = user_question, history
         return self.result
 
 
@@ -41,7 +51,7 @@ def test_agent_proposal_becomes_pending_action_without_executing_write_tool() ->
     result = service.answer("Отмени заказ ORD-1003")
     pending = service.pending_action_store.find_for_user("demo-user-1")
 
-    assert result.response.status is AnswerStatus.CLARIFICATION_NEEDED
+    assert result.response.status is AnswerStatus.CONFIRMATION_REQUIRED
     assert result.response.recommendations == []
     assert result.model == "fake-agent"
     assert pending is not None

@@ -9,6 +9,7 @@ from ai_support_agent.tools.confirmation_resolver import (
     ConfirmationDecision,
     ConfirmationResolver,
 )
+from ai_support_agent.tools.order_status import ToolErrorCode
 
 
 class ConfirmableAssistantService(Protocol):
@@ -34,7 +35,8 @@ class ConversationService:
 
         return (
             self.assistant_service.pending_action_store.find_for_user(
-                self.assistant_service.tool_context.current_user_id
+                self.assistant_service.tool_context.current_user_id,
+                self.assistant_service.tool_context.conversation_id,
             )
             is not None
         )
@@ -43,7 +45,8 @@ class ConversationService:
         """Process a new request or resolve the current user's one pending action."""
 
         pending = self.assistant_service.pending_action_store.find_for_user(
-            self.assistant_service.tool_context.current_user_id
+            self.assistant_service.tool_context.current_user_id,
+            self.assistant_service.tool_context.conversation_id,
         )
         if pending is None:
             return self.assistant_service.answer(user_message)
@@ -54,6 +57,7 @@ class ConversationService:
             approved = self.assistant_service.pending_action_store.approve_for_user(
                 confirmation_id=pending.confirmation_id,
                 user_id=self.assistant_service.tool_context.current_user_id,
+                conversation_id=self.assistant_service.tool_context.conversation_id,
             )
             if approved is None:
                 return _answer_result(
@@ -86,6 +90,7 @@ class ConversationService:
             self.assistant_service.pending_action_store.discard_for_user(
                 confirmation_id=pending.confirmation_id,
                 user_id=self.assistant_service.tool_context.current_user_id,
+                conversation_id=self.assistant_service.tool_context.conversation_id,
             )
             return _answer_result(
                 status=AnswerStatus.ANSWERED,
@@ -118,17 +123,98 @@ def _result_from_confirmed_tool(
 ) -> AnswerResult:
     """Render deterministic user-facing text from a confirmed tool result."""
 
-    if result.get("ok") is True and tool_name == "cancel_order":
-        order_id = result["order"]["order_id"]
+    if tool_name == "cancel_order":
+        if result.get("ok") is True:
+            order_id = result["order"]["order_id"]
+            return _answer_result(
+                status=AnswerStatus.ANSWERED,
+                answer=f"Заказ {order_id} отменён.",
+                sources=[tool_name],
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+            )
+
+        code = result.get("code")
+        if code == ToolErrorCode.ORDER_CANNOT_BE_CANCELLED:
+            return _answer_result(
+                status=AnswerStatus.INSUFFICIENT_CONTEXT,
+                answer="Заказ уже нельзя отменить в текущем статусе.",
+                sources=[tool_name],
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+            )
+        if code == ToolErrorCode.ORDER_NOT_FOUND:
+            return _answer_result(
+                status=AnswerStatus.INSUFFICIENT_CONTEXT,
+                answer="Заказ не найден.",
+                sources=[tool_name],
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+            )
+        if code == ToolErrorCode.ORDER_SERVICE_UNAVAILABLE:
+            return _answer_result(
+                status=AnswerStatus.INSUFFICIENT_CONTEXT,
+                answer="Сервис заказов временно недоступен. Попробуйте позже.",
+                sources=[tool_name],
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+            )
+
+    if tool_name == "request_return" and result.get("ok") is True:
+        order_id = result["return_request"]["order_id"]
         return _answer_result(
             status=AnswerStatus.ANSWERED,
-            answer=f"Заказ {order_id} отменён.",
-            sources=[tool_name],
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
+            answer=(f"Заявка на возврат по заказу {order_id} создана. "
+                    "Передайте товар в пункт приёма возвратов или отделение почты. "
+                    "Срок возврата денег начнётся после поступления товара на склад."),
+            sources=[tool_name], model=model, input_tokens=input_tokens,
+            output_tokens=output_tokens, total_tokens=total_tokens,
         )
+
+    if tool_name == "request_return":
+        code = result.get("code")
+        if code == ToolErrorCode.ORDER_NOT_ELIGIBLE_FOR_RETURN:
+            return _answer_result(
+                status=AnswerStatus.INSUFFICIENT_CONTEXT,
+                answer="Оформить возврат можно только для доставленного заказа.",
+                sources=[tool_name], model=model, input_tokens=input_tokens,
+                output_tokens=output_tokens, total_tokens=total_tokens,
+            )
+        if code == ToolErrorCode.RETURN_ALREADY_REQUESTED:
+            return _answer_result(
+                status=AnswerStatus.INSUFFICIENT_CONTEXT,
+                answer="По этому заказу уже есть заявка на возврат.",
+                sources=[tool_name], model=model, input_tokens=input_tokens,
+                output_tokens=output_tokens, total_tokens=total_tokens,
+            )
+        if code == ToolErrorCode.ORDER_NOT_FOUND:
+            return _answer_result(
+                status=AnswerStatus.INSUFFICIENT_CONTEXT,
+                answer="Заказ не найден.",
+                sources=[tool_name],
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+            )
+        if code == ToolErrorCode.ORDER_SERVICE_UNAVAILABLE:
+            return _answer_result(
+                status=AnswerStatus.INSUFFICIENT_CONTEXT,
+                answer="Сервис заказов временно недоступен. Попробуйте позже.",
+                sources=[tool_name],
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+            )
 
     return _answer_result(
         status=AnswerStatus.ANSWERED,

@@ -1,8 +1,14 @@
 """Application service that turns safe agent proposals into pending confirmations."""
 
 from dataclasses import dataclass, field
+import re
 
-from ai_support_agent.agents.core import AgentRunResult, AgentRunner, AgentState
+from ai_support_agent.agents.core import (
+    AgentConversationMessage,
+    AgentRunResult,
+    AgentRunner,
+    AgentState,
+)
 from ai_support_agent.schemas import AnswerStatus, SupportResponse
 from ai_support_agent.service import AnswerResult
 from ai_support_agent.tools.confirmation import InMemoryPendingActionStore
@@ -20,10 +26,15 @@ class AgentAssistantService:
     pending_action_store: InMemoryPendingActionStore
     last_run: AgentRunResult | None = field(init=False, default=None)
 
-    def answer(self, user_question: str) -> AnswerResult:
+    def answer(
+        self,
+        user_question: str,
+        *,
+        history: tuple[AgentConversationMessage, ...] = (),
+    ) -> AnswerResult:
         """Return an answer or store an approved-by-policy write proposal for confirmation."""
 
-        run = self.agent_runner.run(user_question)
+        run = self.agent_runner.run(user_question, history=history)
         self.last_run = run
         model = run.state.model or "unknown-agent-model"
         if run.proposal is None:
@@ -64,15 +75,32 @@ class AgentAssistantService:
                 run.state,
             )
         assert validation.arguments is not None
+        validated_arguments = _arguments_as_dict(validation.arguments)
+        if (
+            proposal.tool_name == "request_return"
+            and not _reason_is_explicit(user_question, validated_arguments)
+        ):
+            return _answer_result(
+                SupportResponse(
+                    status=AnswerStatus.CLARIFICATION_NEEDED,
+                    answer="Укажите, пожалуйста, краткую причину возврата товара.",
+                    alternative=None,
+                    recommendations=[],
+                    sources=[],
+                ),
+                model,
+                run.state,
+            )
 
         self.pending_action_store.create(
             user_id=self.tool_context.current_user_id,
+            conversation_id=self.tool_context.conversation_id,
             tool_name=proposal.tool_name,
-            arguments=validation.arguments.model_dump(mode="json"),
+            arguments=validated_arguments,
         )
         return _answer_result(
             SupportResponse(
-                status=AnswerStatus.CLARIFICATION_NEEDED,
+                status=AnswerStatus.CONFIRMATION_REQUIRED,
                 answer="Запрошенное действие ожидает вашего подтверждения.",
                 alternative=None,
                 recommendations=[],
@@ -97,3 +125,21 @@ def _answer_result(
         output_tokens=state.output_tokens,
         total_tokens=state.total_tokens,
     )
+
+
+def _reason_is_explicit(user_question: str, arguments: dict[str, object]) -> bool:
+    """Reject an LLM-invented return reason before it reaches confirmation."""
+
+    reason = str(arguments.get("reason", "")).casefold()
+    question_words = set(re.findall(r"[а-яёa-z]{4,}", user_question.casefold()))
+    reason_words = set(re.findall(r"[а-яёa-z]{4,}", reason))
+    ignored = {"заказ", "товар", "вернуть", "возврат", "нужно", "хочу", "причина"}
+    return bool((reason_words - ignored) & question_words)
+
+
+def _arguments_as_dict(arguments: object) -> dict[str, object]:
+    """Normalize validated tool arguments without coupling to one implementation."""
+
+    if isinstance(arguments, dict):
+        return arguments
+    return arguments.model_dump(mode="json")  # type: ignore[union-attr]

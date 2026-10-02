@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Личный кабинет AI Support Agent" />
+    <title>AI Support Agent</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <main class="shell assistant-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">AI SUPPORT AGENT</p>
+          <h1>Поддержка интернет-магазина</h1>
+          <p class="subtitle">Знаю правила магазина, проверяю только ваши заказы и попрошу подтверждение перед отменой.</p>
+        </div>
+        <div class="account">
+          <span id="current-user"></span>
+          <button id="logout-button" class="button button-secondary" type="button">Выйти</button>
+        </div>
+      </header>
+
+      <section class="chat-layout">
+        <aside class="conversation-sidebar" aria-label="История диалогов">
+          <button id="new-chat-button" class="button" type="button">Новый чат</button>
+          <nav id="conversation-list" class="conversation-list" aria-label="Список диалогов"></nav>
+        </aside>
+        <section class="assistant-panel">
+        <div id="messages" class="messages" aria-live="polite">
+          <article class="message assistant-message">
+            <p>Здравствуйте! Помогу с возвратом, доставкой, гарантией и вашими заказами.</p>
+            <p class="meta">Например: «Где заказ ORD-1001?» или «Отмени заказ ORD-1003».</p>
+          </article>
+        </div>
+        <form id="chat-form" class="chat-form">
+          <label class="sr-only" for="chat-message">Сообщение ассистенту</label>
+          <textarea id="chat-message" name="message" rows="2" maxlength="4000" placeholder="Введите вопрос…" required></textarea>
+          <button class="button" type="submit">Отправить</button>
+        </form>
+        </section>
+      </section>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

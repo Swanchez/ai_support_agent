@@ -8,6 +8,7 @@ class AnswerStatus(StrEnum):
     ANSWERED = "answered"
     INSUFFICIENT_CONTEXT = "insufficient_context"
     CLARIFICATION_NEEDED = "clarification_needed"
+    CONFIRMATION_REQUIRED = "confirmation_required"
 
 
 class SupportResponse(BaseModel):

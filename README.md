@@ -4,7 +4,7 @@
 
 Проект построен по слоям: прикладная логика не зависит от CLI, а внешние точки входа можно заменить на веб-интерфейс, API или MCP-клиент.
 
-## Что уже реализовано
+## Что реализовано
 
 - Gemini и OpenAI-клиенты за общим контрактом `LlmClient`; текущая практическая конфигурация использует Gemini.
 - Структурированный ответ `SupportResponse`, проверяемый Pydantic: статус, ответ, альтернатива, рекомендации и источники.
@@ -162,8 +162,13 @@ FastAPI запускается в режиме разработки так:
 uvicorn ai_support_agent.web.main:create_production_app --factory --reload
 ```
 
-Swagger для разработчика доступен по адресу `http://127.0.0.1:8000/docs`.
-Обычный пользователь в будущем будет работать через отдельный web-интерфейс, а не через Swagger.
+Страница входа доступна по адресу `http://127.0.0.1:8000/login`, а основной чат — по адресу `http://127.0.0.1:8000/`.
+Swagger для разработчика остаётся на `http://127.0.0.1:8000/docs`.
+
+В UI пользователь входит обычной формой и после этого попадает в единый чат
+ассистента. Агент сам выбирает RAG-поиск или доступный tool для заказа;
+предложение отмены ожидает подтверждения следующим сообщением пользователя.
+Технический JWT остаётся в `HttpOnly` cookie и не показывается в интерфейсе.
 
 Перед запуском подними локальную PostgreSQL и подготовь схему:
 
@@ -191,13 +196,14 @@ AUTH_COOKIE_SECURE=false
 | `POST /api/v1/auth/token` | Получить Bearer JWT для Swagger или внешнего клиента | логин и пароль |
 | `POST /api/v1/auth/login` | Browser-login с `HttpOnly` cookie | логин и пароль |
 | `POST /api/v1/auth/logout` | Удалить browser cookie | JWT/cookie + CSRF |
-| `POST /api/v1/chat` | Задать вопрос LLM/RAG | JWT/cookie |
+| `GET /api/v1/auth/session` | Вернуть безопасный идентификатор текущей сессии для UI | JWT/cookie |
+| `POST /api/v1/chat` | Задать вопрос единому агенту: RAG, статус заказа или proposal отмены | JWT/cookie |
 | `GET /api/v1/orders/{order_id}` | Получить только свой заказ | JWT/cookie + ownership check |
 | `POST /api/v1/orders/{order_id}/cancellation` | Выполнить подтверждённую отмену | JWT/cookie + ownership + idempotency; cookie-вариант также CSRF |
 
 Для тестовых аккаунтов после seed-скрипта доступны `demo-user-1` / `demo-password-1` и `demo-user-2` / `demo-password-2`. Это только локальные учебные данные.
 
-В browser-варианте `/auth/login` выставляет две cookie: `support_access_token` с флагом `HttpOnly` и `support_csrf_token`. JavaScript будущего UI не увидит JWT, но сможет передать CSRF-токен в `X-CSRF-Token` для write-запроса. Bearer-клиенты передают JWT явно и не нуждаются в CSRF-проверке.
+В browser-варианте `/auth/login` выставляет две cookie: `support_access_token` с флагом `HttpOnly` и `support_csrf_token`. JavaScript UI не увидит JWT, но сможет передать CSRF-токен в `X-CSRF-Token` для write-запроса. Bearer-клиенты передают JWT явно и не нуждаются в CSRF-проверке.
 
 Заказы, результаты идемпотентных операций и безопасные audit-события сохраняются в PostgreSQL. Audit не хранит prompt, аргументы tools, пароли, ключи или JWT. Если audit backend временно недоступен, `BestEffortAuditSink` записывает техническое предупреждение и не подменяет уже успешный результат операции ошибкой.
 
@@ -238,6 +244,8 @@ python -m ai_support_agent.inspect_pdf knowledge/pdf/remote_sales_return.pdf
 `ToolCatalog` — единый реестр tools, их JSON-схем, эффекта (`read`/`write`) и доступа агента. `ToolExecutor` валидирует аргументы, выполняет handler и не доверяет модели права доступа.
 
 Заказы проверяются через `OrderRepository.find_visible_to(order_id, user_id)`. `ToolExecutionContext.current_user_id` создаётся приложением после авторизации и никогда не является аргументом, который придумывает LLM.
+
+Read-tools `get_my_orders` и `get_order_status` возвращают только заказы текущего пользователя. В чате можно написать «Покажи мои заказы» или «Где заказ ORD-1001?»; модель выбирает инструмент, но не получает право подменить идентификатор пользователя.
 
 `InMemoryPendingActionStore` фиксирует lifecycle write-действия в учебном диалоговом сценарии: `proposal_created`, `confirmation_approved`, `confirmation_rejected` или `confirmation_unclear`. После подтверждения `ToolExecutor` создаёт отдельное событие финального выполнения. Для production-композиции используется `PostgresAuditSink`, обёрнутый в `BestEffortAuditSink`: сбой аудита логируется, но не отменяет уже успешно выполненное действие. `InMemoryAuditSink` остаётся удобной реализацией для тестов.
 

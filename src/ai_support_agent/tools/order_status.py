@@ -24,6 +24,8 @@ class ToolErrorCode(StrEnum):
     ORDER_CANNOT_BE_CANCELLED = "order_cannot_be_cancelled"
     ORDER_SERVICE_UNAVAILABLE = "order_service_unavailable"
     IDEMPOTENCY_KEY_CONFLICT = "idempotency_key_conflict"
+    ORDER_NOT_ELIGIBLE_FOR_RETURN = "order_not_eligible_for_return"
+    RETURN_ALREADY_REQUESTED = "return_already_requested"
 
 
 class GetOrderStatusArguments(BaseModel):
@@ -43,6 +45,18 @@ class CancelOrderArguments(GetOrderStatusArguments):
     """Validated arguments for a requested cancellation of one specific order."""
 
 
+class RequestReturnArguments(GetOrderStatusArguments):
+    """A confirmed request to return one delivered order."""
+
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ListMyOrdersArguments(BaseModel):
+    """No model-provided filters: ownership comes only from trusted context."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class OrderStatusData(BaseModel):
     """Raw business data returned by the order service, not user-facing prose."""
 
@@ -52,6 +66,25 @@ class OrderStatusData(BaseModel):
     status: OrderStatus
     updated_at: str
     estimated_delivery: str | None = None
+
+
+class ReturnRequestData(BaseModel):
+    """Safe status of a created return request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: str
+    status: Literal["return_requested"] = "return_requested"
+    reason: str
+
+
+class ReturnRequestSuccess(BaseModel):
+    """Successful structured result of request_return."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[True] = True
+    return_request: ReturnRequestData
 
 
 @dataclass(frozen=True)
@@ -71,6 +104,15 @@ class OrderStatusSuccess(BaseModel):
     order: OrderStatusData
 
 
+class OrderListSuccess(BaseModel):
+    """Successful structured result of listing the caller's own orders."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[True] = True
+    orders: list[OrderStatusData]
+
+
 class OrderStatusFailure(BaseModel):
     """Expected operational failure returned as data rather than an exception."""
 
@@ -83,8 +125,11 @@ class OrderStatusFailure(BaseModel):
 
 
 OrderStatusResult: TypeAlias = OrderStatusSuccess | OrderStatusFailure
+OrderListResult: TypeAlias = OrderListSuccess | OrderStatusFailure
+ReturnRequestResult: TypeAlias = ReturnRequestSuccess | OrderStatusFailure
 
 CANCELLABLE_ORDER_STATUSES = frozenset({OrderStatus.PROCESSING, OrderStatus.PACKED})
+RETURNABLE_ORDER_STATUSES = frozenset({OrderStatus.DELIVERED})
 
 
 class OrderRepositoryUnavailable(RuntimeError):
@@ -104,6 +149,9 @@ class VisibleOrderRepository(Protocol):
 
     def find_visible_to(self, order_id: str, user_id: str) -> OrderStatusData | None:
         """Return an order only when it belongs to the authenticated user."""
+
+    def list_visible_to(self, user_id: str) -> list[OrderStatusData]:
+        """Return only orders that belong to the authenticated user."""
 
 
 class OrderRepository(VisibleOrderRepository, Protocol):
@@ -126,18 +174,37 @@ class OrderRepository(VisibleOrderRepository, Protocol):
         """Return the earlier successful cancellation for one idempotency key."""
 
 
+class ReturnRepository(VisibleOrderRepository, Protocol):
+    """Durable boundary for one confirmation-gated return request."""
+
+    def request_return_visible_to(
+        self, order_id: str, user_id: str, reason: str, idempotency_key: str
+    ) -> ReturnRequestData | None:
+        """Create one request only for the caller's delivered order."""
+
+
 @dataclass
 class InMemoryOrderRepository:
     """Deterministic local order data; it never makes a network request."""
 
     orders: dict[str, StoredOrder]
     cancellation_results: dict[tuple[str, str], OrderStatusData] = field(default_factory=dict)
+    return_requests: dict[str, ReturnRequestData] = field(default_factory=dict)
 
     def find_visible_to(self, order_id: str, user_id: str) -> OrderStatusData | None:
         order = self.orders.get(order_id)
         if order is None or order.owner_user_id != user_id:
             return None
         return order.data
+
+    def list_visible_to(self, user_id: str) -> list[OrderStatusData]:
+        """List only this user's orders in a stable order."""
+
+        return [
+            order.data
+            for order_id, order in sorted(self.orders.items())
+            if order.owner_user_id == user_id
+        ]
 
     def cancel_visible_to(
         self,
@@ -171,6 +238,21 @@ class InMemoryOrderRepository:
             raise IdempotencyKeyConflict("Idempotency key belongs to another order.")
         return previous_result
 
+    def request_return_visible_to(
+        self, order_id: str, user_id: str, reason: str, idempotency_key: str
+    ) -> ReturnRequestData | None:
+        _ = idempotency_key
+        order = self.find_visible_to(order_id, user_id)
+        if order is None:
+            return None
+        if order.status not in RETURNABLE_ORDER_STATUSES:
+            raise OrderCancellationNotAllowed("Order is not eligible for return.")
+        if order_id in self.return_requests:
+            raise IdempotencyKeyConflict("Return already requested.")
+        result = ReturnRequestData(order_id=order_id, reason=reason.strip())
+        self.return_requests[order_id] = result
+        return result
+
 
 DEMO_ORDER_REPOSITORY = InMemoryOrderRepository(
     orders={
@@ -197,6 +279,15 @@ DEMO_ORDER_REPOSITORY = InMemoryOrderRepository(
                 order_id="ORD-1003",
                 status=OrderStatus.PACKED,
                 updated_at="2026-09-22",
+            ),
+        ),
+        "ORD-1004": StoredOrder(
+            owner_user_id="demo-user-1",
+            data=OrderStatusData(
+                order_id="ORD-1004",
+                status=OrderStatus.DELIVERED,
+                updated_at="2026-09-18",
+                estimated_delivery="2026-09-18",
             ),
         ),
     }
@@ -226,6 +317,25 @@ def get_order_status(
             retryable=False,
         )
     return OrderStatusSuccess(order=order)
+
+
+def get_my_orders(
+    arguments: ListMyOrdersArguments,
+    current_user_id: str,
+    repository: VisibleOrderRepository = DEMO_ORDER_REPOSITORY,
+) -> OrderListResult:
+    """List orders belonging to the caller without accepting ownership as input."""
+
+    _ = arguments
+    try:
+        orders = repository.list_visible_to(current_user_id)
+    except OrderRepositoryUnavailable:
+        return OrderStatusFailure(
+            code=ToolErrorCode.ORDER_SERVICE_UNAVAILABLE,
+            message="Order service is temporarily unavailable.",
+            retryable=True,
+        )
+    return OrderListSuccess(orders=orders)
 
 
 def cancel_order(
@@ -290,6 +400,36 @@ def cancel_order(
     return OrderStatusSuccess(order=cancelled)
 
 
+def request_return(
+    arguments: RequestReturnArguments,
+    current_user_id: str,
+    idempotency_key: str,
+    repository: ReturnRepository,
+) -> ReturnRequestResult:
+    """Create one return request only after confirmation for a delivered order."""
+
+    try:
+        order = repository.find_visible_to(arguments.order_id, current_user_id)
+        if order is None:
+            return OrderStatusFailure(code=ToolErrorCode.ORDER_NOT_FOUND, message="Order was not found.", retryable=False)
+        if order.status not in RETURNABLE_ORDER_STATUSES:
+            return OrderStatusFailure(code=ToolErrorCode.ORDER_NOT_ELIGIBLE_FOR_RETURN, message="Only delivered orders can be returned.", retryable=False)
+        created = repository.request_return_visible_to(arguments.order_id, current_user_id, arguments.reason, idempotency_key)
+    except IdempotencyKeyConflict:
+        return OrderStatusFailure(code=ToolErrorCode.RETURN_ALREADY_REQUESTED, message="A return request already exists.", retryable=False)
+    except OrderRepositoryUnavailable:
+        return OrderStatusFailure(code=ToolErrorCode.ORDER_SERVICE_UNAVAILABLE, message="Order service is temporarily unavailable.", retryable=True)
+    if created is None:
+        return OrderStatusFailure(code=ToolErrorCode.ORDER_NOT_FOUND, message="Order was not found.", retryable=False)
+    return ReturnRequestSuccess(return_request=created)
+
+
+def request_return_tool_definition() -> dict[str, object]:
+    """Describe the confirmation-protected return-request tool."""
+
+    return {"type": "function", "name": "request_return", "description": "Creates a return request for one delivered order after explicit confirmation.", "parameters": RequestReturnArguments.model_json_schema()}
+
+
 def get_order_status_tool_definition() -> dict[str, object]:
     """Describe the tool for a future provider-specific tool-calling adapter."""
 
@@ -298,6 +438,17 @@ def get_order_status_tool_definition() -> dict[str, object]:
         "name": "get_order_status",
         "description": "Gets current status of one order by its public order number.",
         "parameters": GetOrderStatusArguments.model_json_schema(),
+    }
+
+
+def get_my_orders_tool_definition() -> dict[str, object]:
+    """Describe the ownership-scoped order-listing tool for the agent."""
+
+    return {
+        "type": "function",
+        "name": "get_my_orders",
+        "description": "Lists the currently authenticated user's own orders.",
+        "parameters": ListMyOrdersArguments.model_json_schema(),
     }
 
 

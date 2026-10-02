@@ -9,6 +9,7 @@ def test_external_reference_collection_keeps_pdf_page_provenance() -> None:
     assert {chunk.document_id for chunk in chunks} == {
         "consumer-remote-sales-v1",
         "consumer-exchange-return-v1",
+        "consumer-remote-sales-rights-v1",
     }
     assert all(chunk.source_type is SourceType.EXTERNAL_REFERENCE for chunk in chunks)
     assert all(chunk.page_number is not None for chunk in chunks)

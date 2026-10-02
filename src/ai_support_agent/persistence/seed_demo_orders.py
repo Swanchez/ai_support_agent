@@ -37,6 +37,13 @@ DEMO_ORDER_VALUES = (
         "estimated_delivery_at": None,
         "updated_at": datetime(2026, 9, 22, tzinfo=UTC),
     },
+    {
+        "id": "ORD-1004",
+        "user_id": "demo-user-1",
+        "status": OrderStatus.DELIVERED.value,
+        "estimated_delivery_at": datetime(2026, 9, 18, tzinfo=UTC).date(),
+        "updated_at": datetime(2026, 9, 18, tzinfo=UTC),
+    },
 )
 
 

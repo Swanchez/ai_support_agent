@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from ai_support_agent.llm_client import LlmResult
 from ai_support_agent.schemas import SupportResponse
@@ -14,6 +14,14 @@ class AgentAction:
 
     name: str
     arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class AgentConversationMessage:
+    """A prior browser message used only to resolve conversational references."""
+
+    role: Literal["user", "assistant"]
+    content: str
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,7 @@ class AgentState:
     """Application-owned state for one bounded agent run."""
 
     original_question: str
+    history: tuple[AgentConversationMessage, ...] = ()
     observations: list[AgentObservation] = field(default_factory=list)
     step_count: int = 0
     input_tokens: int = 0
@@ -126,10 +135,15 @@ class AgentRunner:
     tools: AgentToolRegistry
     max_steps: int = 3
 
-    def run(self, user_question: str) -> AgentRunResult:
+    def run(
+        self,
+        user_question: str,
+        *,
+        history: tuple[AgentConversationMessage, ...] = (),
+    ) -> AgentRunResult:
         """Execute at most max_steps actions, then force one final answer."""
 
-        state = AgentState(original_question=user_question)
+        state = AgentState(original_question=user_question, history=history)
         for _ in range(self.max_steps):
             planner_result = self.planner.decide(state)
             _add_usage(state, planner_result.llm_result)

@@ -13,6 +13,7 @@ from ai_support_agent.exceptions import (
     OrderNotFoundError,
     OrderCancellationConflictError,
     OrderServiceUnavailableError,
+    ConversationNotFoundError,
 )
 
 
@@ -58,6 +59,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(OrderNotFoundError, _order_not_found)
     app.add_exception_handler(OrderServiceUnavailableError, _service_unavailable)
     app.add_exception_handler(OrderCancellationConflictError, _order_cancellation_conflict)
+    app.add_exception_handler(ConversationNotFoundError, _conversation_not_found)
     app.add_exception_handler(AuthenticationServiceUnavailableError, _service_unavailable)
     app.add_exception_handler(InvalidCredentialsError, _invalid_credentials)
 
@@ -116,6 +118,13 @@ def _order_cancellation_conflict(
 
     _ = request, error
     return _error_response(status_code=409, detail="Order cancellation cannot be completed.")
+
+
+def _conversation_not_found(request: Request, error: Exception) -> JSONResponse:
+    """Do not disclose whether another user's conversation exists."""
+
+    _ = request, error
+    return _error_response(status_code=404, detail="Conversation was not found.")
 
 
 def _error_response(*, status_code: int, detail: str) -> JSONResponse:

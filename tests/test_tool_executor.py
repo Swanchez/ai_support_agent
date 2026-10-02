@@ -77,8 +77,10 @@ def test_executor_exposes_only_registered_public_definitions() -> None:
     definitions = DEFAULT_TOOL_EXECUTOR.definitions()
 
     assert [definition["name"] for definition in definitions] == [
+        "get_my_orders",
         "get_order_status",
         "cancel_order",
+        "request_return",
     ]
 
 

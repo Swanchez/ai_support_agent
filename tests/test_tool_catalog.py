@@ -17,8 +17,10 @@ from ai_support_agent.tools.order_status import (
 def test_catalog_is_the_single_registration_source_for_default_executor() -> None:
     assert DEFAULT_TOOL_EXECUTOR.registry is DEFAULT_TOOL_CATALOG.tools
     assert [definition["name"] for definition in DEFAULT_TOOL_CATALOG.definitions()] == [
+        "get_my_orders",
         "get_order_status",
         "cancel_order",
+            "request_return",
     ]
 
 
@@ -26,11 +28,11 @@ def test_catalog_exposes_only_read_tools_to_the_agent() -> None:
     assert [
         definition["name"]
         for definition in DEFAULT_TOOL_CATALOG.definitions_for_agent(AgentToolAccess.READ)
-    ] == ["get_order_status"]
+    ] == ["get_my_orders", "get_order_status"]
     assert [
         definition["name"]
         for definition in DEFAULT_TOOL_CATALOG.definitions_for_agent(AgentToolAccess.PROPOSAL)
-    ] == ["cancel_order"]
+    ] == ["cancel_order", "request_return"]
     proposal_definition = DEFAULT_TOOL_CATALOG.definitions_for_agent(
         AgentToolAccess.PROPOSAL
     )[0]

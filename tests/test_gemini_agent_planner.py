@@ -1,8 +1,10 @@
+import json
 from types import SimpleNamespace
 
 from ai_support_agent.agents.core import (
     AgentAction,
     AgentActionProposal,
+    AgentConversationMessage,
     AgentObservation,
     AgentState,
     AgentToolResult,
@@ -136,3 +138,33 @@ def test_agent_prompt_instructs_the_model_not_to_retry_known_tool_errors() -> No
 def test_agent_prompt_uses_a_generic_proposal_only_rule() -> None:
     assert "proposal-only" in AGENT_SYSTEM_PROMPT
     assert "cancel_order является proposal-only" not in AGENT_SYSTEM_PROMPT
+
+
+def test_gemini_planner_receives_history_only_as_conversation_context() -> None:
+    interactions = FakeInteractionsApi(
+        [
+            response(
+                output_text=(
+                    '{"status":"answered","answer":"Готово",'
+                    '"alternative":null,"recommendations":[],"sources":[]}'
+                ),
+                steps=[],
+            )
+        ]
+    )
+    planner = GeminiAgentPlanner(
+        GeminiConfig(api_key="test-key", model="test-model"),
+        tool_definitions=[],
+        sdk_client=SimpleNamespace(interactions=interactions),
+    )
+
+    planner.decide(
+        AgentState(
+            "А когда?",
+            history=(AgentConversationMessage("user", "Когда вернут деньги?"),),
+        )
+    )
+
+    payload = json.loads(interactions.calls[0]["input"])
+    assert payload["history"] == [{"role": "user", "content": "Когда вернут деньги?"}]
+    assert payload["question"] == "А когда?"

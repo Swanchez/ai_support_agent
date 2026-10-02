@@ -10,7 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ai_support_agent.persistence.models import IdempotencyRecord, OrderRecord
+from ai_support_agent.persistence.models import (
+    IdempotencyRecord,
+    OrderRecord,
+    ReturnRequestRecord,
+)
 from ai_support_agent.tools.order_status import (
     CANCELLABLE_ORDER_STATUSES,
     IdempotencyKeyConflict,
@@ -18,10 +22,13 @@ from ai_support_agent.tools.order_status import (
     OrderRepositoryUnavailable,
     OrderStatus,
     OrderStatusData,
+    ReturnRequestData,
+    RETURNABLE_ORDER_STATUSES,
 )
 
 
 CANCEL_ORDER_OPERATION = "cancel_order"
+REQUEST_RETURN_OPERATION = "request_return"
 IDEMPOTENCY_RESULT_TTL = timedelta(days=1)
 
 
@@ -48,6 +55,25 @@ class PostgresOrderRepository:
             return None
         try:
             return _to_order_status_data(record)
+        except ValueError as error:
+            raise OrderRepositoryUnavailable("Stored order data is invalid.") from error
+
+    def list_visible_to(self, user_id: str) -> list[OrderStatusData]:
+        """List one user's orders, newest update first, without exposing others."""
+
+        statement = (
+            select(OrderRecord)
+            .where(OrderRecord.user_id == user_id)
+            .order_by(OrderRecord.updated_at.desc(), OrderRecord.id)
+        )
+        try:
+            with self.session_factory() as session:
+                records = session.scalars(statement).all()
+        except SQLAlchemyError as error:
+            raise OrderRepositoryUnavailable("PostgreSQL order listing failed.") from error
+
+        try:
+            return [_to_order_status_data(record) for record in records]
         except ValueError as error:
             raise OrderRepositoryUnavailable("Stored order data is invalid.") from error
 
@@ -126,6 +152,63 @@ class PostgresOrderRepository:
         except ValueError as error:
             raise OrderRepositoryUnavailable("Stored order data is invalid.") from error
 
+    def request_return_visible_to(
+        self,
+        order_id: str,
+        user_id: str,
+        reason: str,
+        idempotency_key: str,
+    ) -> ReturnRequestData | None:
+        """Persist one return request for a delivered visible order atomically."""
+
+        fingerprint = return_request_fingerprint(order_id, reason)
+        try:
+            with self.session_factory() as session:
+                with session.begin():
+                    existing = _find_idempotency_record(
+                        session, user_id, idempotency_key, REQUEST_RETURN_OPERATION
+                    )
+                    if existing is not None:
+                        return _return_idempotency_result(existing, fingerprint)
+                    order = session.scalar(
+                        select(OrderRecord)
+                        .where(OrderRecord.id == order_id, OrderRecord.user_id == user_id)
+                        .with_for_update()
+                    )
+                    if order is None:
+                        return None
+                    if OrderStatus(order.status) not in RETURNABLE_ORDER_STATUSES:
+                        raise OrderCancellationNotAllowed("Order is not eligible for return.")
+                    already_requested = session.scalar(
+                        select(ReturnRequestRecord).where(ReturnRequestRecord.order_id == order_id)
+                    )
+                    if already_requested is not None:
+                        raise IdempotencyKeyConflict("Return already requested.")
+                    result = ReturnRequestData(order_id=order_id, reason=reason.strip())
+                    session.add(
+                        ReturnRequestRecord(
+                            order_id=order_id,
+                            user_id=user_id,
+                            reason=result.reason,
+                            status=result.status,
+                        )
+                    )
+                    session.add(
+                        IdempotencyRecord(
+                            actor_id=user_id,
+                            operation=REQUEST_RETURN_OPERATION,
+                            idempotency_key=idempotency_key,
+                            request_fingerprint=fingerprint,
+                            result_payload=result.model_dump(mode="json"),
+                            expires_at=datetime.now(UTC) + IDEMPOTENCY_RESULT_TTL,
+                        )
+                    )
+                    return result
+        except SQLAlchemyError as error:
+            raise OrderRepositoryUnavailable("PostgreSQL return request failed.") from error
+        except ValueError as error:
+            raise OrderRepositoryUnavailable("Stored order data is invalid.") from error
+
 
 def _to_order_status_data(record: OrderRecord) -> OrderStatusData:
     """Map a persistence record to the existing safe tool-data contract."""
@@ -153,16 +236,28 @@ def cancellation_request_fingerprint(order_id: str) -> str:
     return hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
 
 
+def return_request_fingerprint(order_id: str, reason: str) -> str:
+    """Bind a return retry key to both its order and its normalized reason."""
+
+    canonical_request = json.dumps(
+        {"operation": REQUEST_RETURN_OPERATION, "order_id": order_id, "reason": reason.strip()},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
+
+
 def _find_idempotency_record(
     session: Session,
     user_id: str,
     idempotency_key: str,
+    operation: str = CANCEL_ORDER_OPERATION,
 ) -> IdempotencyRecord | None:
     return session.get(
         IdempotencyRecord,
         {
             "actor_id": user_id,
-            "operation": CANCEL_ORDER_OPERATION,
+            "operation": operation,
             "idempotency_key": idempotency_key,
         },
     )
@@ -178,3 +273,14 @@ def _idempotency_result(
         return OrderStatusData.model_validate(record.result_payload)
     except ValueError as error:
         raise OrderRepositoryUnavailable("Stored idempotency result is invalid.") from error
+
+
+def _return_idempotency_result(
+    record: IdempotencyRecord, fingerprint: str
+) -> ReturnRequestData:
+    if record.request_fingerprint != fingerprint:
+        raise IdempotencyKeyConflict("Idempotency key conflicts with another request.")
+    try:
+        return ReturnRequestData.model_validate(record.result_payload)
+    except ValueError as error:
+        raise OrderRepositoryUnavailable("Stored return result is invalid.") from error

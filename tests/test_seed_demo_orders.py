@@ -59,7 +59,7 @@ def test_seed_demo_orders_uses_one_idempotent_postgresql_insert() -> None:
     assert "INSERT INTO orders" in sql
     assert "ON CONFLICT (id) DO NOTHING" in sql
     assert "RETURNING orders.id" in sql
-    assert len(DEMO_ORDER_VALUES) == 3
+    assert len(DEMO_ORDER_VALUES) == 4
 
 
 def test_seed_demo_orders_rolls_back_when_the_insert_fails() -> None:

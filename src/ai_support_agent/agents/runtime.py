@@ -3,6 +3,7 @@
 from ai_support_agent.agents.core import AgentPlanner, AgentRunner, AgentToolRegistry
 from ai_support_agent.agents.gemini_planner import GeminiAgentPlanner
 from ai_support_agent.agents.tools import (
+    MyOrdersAgentTool,
     OrderStatusAgentTool,
     SearchKnowledgeBaseTool,
     agent_tool_definitions,
@@ -31,6 +32,7 @@ def build_agent_runner(
         tools=AgentToolRegistry(
             {
                 "search_knowledge_base": SearchKnowledgeBaseTool(retriever),
+                "get_my_orders": MyOrdersAgentTool(executor, context),
                 "get_order_status": OrderStatusAgentTool(executor, context),
             }
         ),

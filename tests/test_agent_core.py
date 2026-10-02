@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from ai_support_agent.agents.core import (
     AgentAction,
     AgentActionProposal,
+    AgentConversationMessage,
     AgentDecision,
     AgentPlannerResult,
     AgentRunResult,
@@ -130,3 +131,15 @@ def test_agent_returns_a_write_proposal_without_executing_any_tool() -> None:
     assert result.proposal == AgentActionProposal("cancel_order", {"order_id": "ORD-1003"})
     assert result.state.step_count == 0
     assert cancel_tool.received_arguments == []
+
+
+def test_agent_keeps_the_bounded_history_in_its_application_owned_state() -> None:
+    tool = StubTool(AgentToolResult({"ok": True}, ()), [])
+    history = (AgentConversationMessage("user", "Предыдущий вопрос"),)
+    result = AgentRunner(
+        planner=LoopingPlanner(),
+        tools=AgentToolRegistry({"search_knowledge_base": tool}),
+        max_steps=1,
+    ).run("Новый вопрос", history=history)
+
+    assert result.state.history == history

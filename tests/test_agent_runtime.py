@@ -50,5 +50,9 @@ def test_agent_runtime_wires_only_read_tools_and_shared_safeguards() -> None:
     )
 
     assert runner.max_steps == AGENT_MAX_STEPS
-    assert list(runner.tools.tools) == ["search_knowledge_base", "get_order_status"]
+    assert list(runner.tools.tools) == [
+        "search_knowledge_base",
+        "get_my_orders",
+        "get_order_status",
+    ]
     assert runner.run("Question").response.answer == "No evidence."

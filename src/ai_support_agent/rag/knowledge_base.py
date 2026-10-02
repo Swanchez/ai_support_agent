@@ -24,6 +24,11 @@ EXTERNAL_REFERENCE_DOCUMENTS: tuple[tuple[str, Path, str], ...] = (
         PDF_DIRECTORY / "product_exchange_return.pdf",
         "Обмен и возврат непродовольственного товара",
     ),
+    (
+        "consumer-remote-sales-rights-v1",
+        PDF_DIRECTORY / "О правах потребителя при дистанционном способе продажи товаров.pdf",
+        "Права потребителя при дистанционной продаже товаров",
+    ),
 )
 
 

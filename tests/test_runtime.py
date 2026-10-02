@@ -75,4 +75,5 @@ def test_runtime_creates_a_separate_retriever_for_external_references(
     assert {item.chunk.document_id for item in retriever.vector_store.indexed_chunks} == {
         "consumer-remote-sales-v1",
         "consumer-exchange-return-v1",
+            "consumer-remote-sales-rights-v1",
     }

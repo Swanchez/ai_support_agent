@@ -21,6 +21,7 @@ class PendingToolAction:
     user_id: str
     tool_name: str
     arguments: dict[str, Any]
+    conversation_id: str | None = None
 
 
 @dataclass
@@ -34,13 +35,14 @@ class InMemoryPendingActionStore:
         self,
         *,
         user_id: str,
+        conversation_id: str | None = None,
         tool_name: str,
         arguments: dict[str, Any],
     ) -> PendingToolAction:
         """Save a new action and return an unpredictable application-generated ID."""
 
         for pending_id, pending in tuple(self._actions.items()):
-            if pending.user_id == user_id:
+            if pending.user_id == user_id and pending.conversation_id == conversation_id:
                 del self._actions[pending_id]
 
         action = PendingToolAction(
@@ -48,21 +50,41 @@ class InMemoryPendingActionStore:
             user_id=user_id,
             tool_name=tool_name,
             arguments=deepcopy(arguments),
+            conversation_id=conversation_id,
         )
         self._actions[action.confirmation_id] = action
         self._record(action, "proposal_created")
         return action
 
-    def find_for_user(self, user_id: str) -> PendingToolAction | None:
-        """Return the user's sole pending action without consuming it."""
+    def find_for_user(
+        self, user_id: str, conversation_id: str | None = None
+    ) -> PendingToolAction | None:
+        """Return one pending action in this user's current conversation scope."""
 
-        return next((action for action in self._actions.values() if action.user_id == user_id), None)
+        return next(
+            (
+                action
+                for action in self._actions.values()
+                if action.user_id == user_id and action.conversation_id == conversation_id
+            ),
+            None,
+        )
 
-    def discard_for_user(self, *, confirmation_id: str, user_id: str) -> bool:
+    def discard_for_user(
+        self,
+        *,
+        confirmation_id: str,
+        user_id: str,
+        conversation_id: str | None = None,
+    ) -> bool:
         """Discard one pending action only when it belongs to the requesting user."""
 
         action = self._actions.get(confirmation_id)
-        if action is None or action.user_id != user_id:
+        if (
+            action is None
+            or action.user_id != user_id
+            or action.conversation_id != conversation_id
+        ):
             return False
         del self._actions[confirmation_id]
         self._record(action, "confirmation_rejected")
@@ -73,11 +95,16 @@ class InMemoryPendingActionStore:
         *,
         confirmation_id: str,
         user_id: str,
+        conversation_id: str | None = None,
     ) -> PendingToolAction | None:
         """Consume and return an action only when it belongs to the approving user."""
 
         action = self._actions.get(confirmation_id)
-        if action is None or action.user_id != user_id:
+        if (
+            action is None
+            or action.user_id != user_id
+            or action.conversation_id != conversation_id
+        ):
             return None
         approved = self._actions.pop(confirmation_id)
         self._record(approved, "confirmation_approved")

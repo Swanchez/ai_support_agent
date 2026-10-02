@@ -350,6 +350,19 @@ def test_browser_logout_removes_the_authentication_cookie() -> None:
     assert chat_response.status_code == 401
 
 
+def test_browser_session_returns_only_the_authenticated_user_id() -> None:
+    client = TestClient(create_test_app(StubChatService()))
+    client.post(
+        "/api/v1/auth/login",
+        json={"login": "demo-user-1", "password": "demo-password-1"},
+    )
+
+    response = client.get("/api/v1/auth/session")
+
+    assert response.status_code == 200
+    assert response.json() == {"user_id": "demo-user-1"}
+
+
 def test_browser_logout_rejects_a_missing_or_mismatched_csrf_token() -> None:
     client = TestClient(create_test_app(StubChatService()))
     client.post(

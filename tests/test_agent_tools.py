@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from ai_support_agent.agents.tools import (
+    MyOrdersAgentTool,
     OrderStatusAgentTool,
     SearchKnowledgeBaseTool,
     agent_tool_definitions,
@@ -78,9 +79,23 @@ def test_order_status_adapter_reuses_existing_executor_and_ownership_check() -> 
     assert other_users_order.data["code"] == "order_not_found"
 
 
+def test_my_orders_adapter_reuses_the_ownership_scoped_executor() -> None:
+    tool = MyOrdersAgentTool(DEFAULT_TOOL_EXECUTOR, DEMO_TOOL_CONTEXT)
+
+    result = tool.execute({})
+
+    assert [order["order_id"] for order in result.data["orders"]] == [
+        "ORD-1001",
+        "ORD-1003",
+        "ORD-1004",
+    ]
+    assert result.source_ids == ("get_my_orders",)
+
+
 def test_agent_tool_definitions_expose_only_read_actions() -> None:
     assert [definition["name"] for definition in read_agent_tool_definitions()] == [
         "search_knowledge_base",
+        "get_my_orders",
         "get_order_status",
     ]
 
@@ -88,7 +103,9 @@ def test_agent_tool_definitions_expose_only_read_actions() -> None:
 def test_agent_tool_definitions_expose_writes_only_as_proposals() -> None:
     assert [definition["name"] for definition in agent_tool_definitions()] == [
         "search_knowledge_base",
+        "get_my_orders",
         "get_order_status",
         "cancel_order",
+        "request_return",
     ]
-    assert proposal_agent_tool_names() == frozenset({"cancel_order"})
+    assert proposal_agent_tool_names() == frozenset({"cancel_order", "request_return"})

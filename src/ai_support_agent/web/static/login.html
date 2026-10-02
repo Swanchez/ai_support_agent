@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Вход в AI Support Agent" />
+    <title>Вход · AI Support Agent</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <main class="shell login-shell">
+      <section class="auth-card">
+        <div>
+          <p class="eyebrow">AI SUPPORT AGENT</p>
+          <h1>Поддержка интернет-магазина</h1>
+          <p>Войдите, чтобы ассистент мог безопасно работать только с вашими заказами.</p>
+        </div>
+        <form id="login-form" class="stack">
+          <label>Логин<input name="login" autocomplete="username" required maxlength="64" /></label>
+          <label>Пароль<input name="password" type="password" autocomplete="current-password" required maxlength="256" /></label>
+          <button class="button" type="submit">Войти</button>
+          <p id="login-error" class="form-error" role="alert"></p>
+        </form>
+      </section>
+    </main>
+    <script src="/static/login.js" defer></script>
+  </body>
+</html>

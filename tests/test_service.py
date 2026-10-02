@@ -41,7 +41,9 @@ class StubRetriever:
 
 
 def test_format_retrieved_context_includes_evidence_and_source() -> None:
-    chunk = DEFAULT_KNOWLEDGE_BASE[0]
+    chunk = next(
+        chunk for chunk in DEFAULT_KNOWLEDGE_BASE if "Деньги за возврат" in chunk.text
+    )
     context = format_retrieved_context(
         [
             RetrievedChunk(

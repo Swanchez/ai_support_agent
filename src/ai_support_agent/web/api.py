@@ -25,6 +25,8 @@ from ai_support_agent.security.tokens import AccessToken
 from ai_support_agent.tools.context import ToolExecutionContext
 from ai_support_agent.tools.order_status import OrderStatusData
 from ai_support_agent.web.order_service import ToolBackedOrderStatusService
+from ai_support_agent.web.conversation_history import ConversationHistoryService
+from ai_support_agent.persistence.conversation_repository import ConversationSummary, StoredChatMessage
 
 
 class ChatRequest(BaseModel):
@@ -72,6 +74,25 @@ class LoginResponse(BaseModel):
     status: Literal["authenticated"] = "authenticated"
 
 
+class BrowserSessionResponse(BaseModel):
+    """Safe identity data needed to render the signed-in browser interface."""
+
+    user_id: str
+
+
+class ConversationResponse(BaseModel):
+    id: str
+    title: str
+    updated_at: datetime
+
+
+class ChatMessageResponse(BaseModel):
+    id: int
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: datetime
+
+
 class ChatService(Protocol):
     """Application boundary required by the HTTP layer."""
 
@@ -98,6 +119,7 @@ def create_app(
     order_status_service: OrderStatusService | None = None,
     *,
     authentication_service: AuthenticationService,
+    conversation_history_service: ConversationHistoryService | None = None,
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
 ) -> FastAPI:
     """Create the web application around an already configured service."""
@@ -121,6 +143,11 @@ def create_app(
 
     def get_authentication_service() -> AuthenticationService:
         return authentication_service
+
+    def get_conversation_history_service() -> ConversationHistoryService:
+        if conversation_history_service is None:
+            raise RuntimeError("Conversation history service is not configured.")
+        return conversation_history_service
 
     current_tool_context = create_current_tool_context_dependency(
         get_authentication_service()
@@ -193,6 +220,14 @@ def create_app(
         response.status_code = status.HTTP_204_NO_CONTENT
         return response
 
+    @app.get("/api/v1/auth/session", response_model=BrowserSessionResponse)
+    def browser_session(
+        context: Annotated[ToolExecutionContext, Depends(current_tool_context)],
+    ) -> BrowserSessionResponse:
+        """Return the authenticated subject, never the JWT or its raw claims."""
+
+        return BrowserSessionResponse(user_id=context.current_user_id)
+
     @app.post(
         "/api/v1/chat",
         response_model=SupportResponse,
@@ -204,6 +239,46 @@ def create_app(
         context: Annotated[ToolExecutionContext, Depends(current_tool_context)],
     ) -> SupportResponse:
         return service.answer(request.message, context).response
+
+    @app.get("/api/v1/conversations", response_model=list[ConversationResponse])
+    def list_conversations(
+        service: Annotated[ConversationHistoryService, Depends(get_conversation_history_service)],
+        context: Annotated[ToolExecutionContext, Depends(current_tool_context)],
+    ) -> list[ConversationResponse]:
+        return [_conversation_response(item) for item in service.list_for_user(context.current_user_id)]
+
+    @app.post("/api/v1/conversations", response_model=ConversationResponse)
+    def create_conversation(
+        service: Annotated[ConversationHistoryService, Depends(get_conversation_history_service)],
+        context: Annotated[ToolExecutionContext, Depends(current_tool_context)],
+        _: Annotated[None, Depends(csrf_protection)],
+    ) -> ConversationResponse:
+        return _conversation_response(service.create(context.current_user_id))
+
+    @app.get(
+        "/api/v1/conversations/{conversation_id}/messages",
+        response_model=list[ChatMessageResponse],
+    )
+    def list_conversation_messages(
+        conversation_id: Annotated[str, Path(min_length=36, max_length=36)],
+        service: Annotated[ConversationHistoryService, Depends(get_conversation_history_service)],
+        context: Annotated[ToolExecutionContext, Depends(current_tool_context)],
+    ) -> list[ChatMessageResponse]:
+        return [_message_response(item) for item in service.messages(conversation_id, context.current_user_id)]
+
+    @app.post(
+        "/api/v1/conversations/{conversation_id}/messages",
+        response_model=SupportResponse,
+        responses=CHAT_ERROR_RESPONSES,
+    )
+    def answer_conversation_message(
+        conversation_id: Annotated[str, Path(min_length=36, max_length=36)],
+        request: ChatRequest,
+        service: Annotated[ConversationHistoryService, Depends(get_conversation_history_service)],
+        context: Annotated[ToolExecutionContext, Depends(current_tool_context)],
+        _: Annotated[None, Depends(csrf_protection)],
+    ) -> SupportResponse:
+        return service.answer(conversation_id, request.message, context).response
 
     @app.get(
         "/api/v1/orders/{order_id}",
@@ -255,3 +330,16 @@ def create_app(
         return service.cancel(order_id, cancellation_context)
 
     return app
+
+
+def _conversation_response(value: ConversationSummary) -> ConversationResponse:
+    return ConversationResponse(id=value.id, title=value.title, updated_at=value.updated_at)
+
+
+def _message_response(value: StoredChatMessage) -> ChatMessageResponse:
+    return ChatMessageResponse(
+        id=value.id,
+        role=value.role.value,
+        content=value.content,
+        created_at=value.created_at,
+    )

@@ -23,3 +23,5 @@ def test_browser_ui_serves_the_entry_page_and_static_assets() -> None:
     assert script.status_code == 200
     assert "/api/v1/conversations" in script.text
     assert "new-chat-button" in index.text
+    assert "scrollMessagesToBottom" in script.text
+    assert "scrollIntoView" not in script.text

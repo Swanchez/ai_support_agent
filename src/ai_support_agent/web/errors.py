@@ -14,6 +14,7 @@ from ai_support_agent.exceptions import (
     OrderCancellationConflictError,
     OrderServiceUnavailableError,
     ConversationNotFoundError,
+    VectorStoreError,
 )
 
 
@@ -55,6 +56,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     app.add_exception_handler(LlmRequestError, _service_unavailable)
     app.add_exception_handler(EmbeddingRequestError, _service_unavailable)
+    app.add_exception_handler(VectorStoreError, _service_unavailable)
     app.add_exception_handler(InvalidModelResponseError, _invalid_provider_response)
     app.add_exception_handler(OrderNotFoundError, _order_not_found)
     app.add_exception_handler(OrderServiceUnavailableError, _service_unavailable)

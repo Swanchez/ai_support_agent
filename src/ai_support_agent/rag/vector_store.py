@@ -2,11 +2,25 @@
 
 from dataclasses import dataclass
 from math import sqrt
+from typing import Protocol
 
 from ai_support_agent.rag.embeddings import Embedding
 from ai_support_agent.rag.knowledge_base import KnowledgeChunk
 from ai_support_agent.rag.retriever import RetrievedChunk
 from ai_support_agent.rag.retriever import limit_chunks_per_document
+
+
+class VectorStore(Protocol):
+    """Search stored embeddings without depending on their storage backend."""
+
+    def search(
+        self,
+        query_embedding: Embedding,
+        *,
+        top_k: int = 3,
+        threshold: float = 0.2,
+        max_chunks_per_document: int | None = None,
+    ) -> list[RetrievedChunk]: ...
 
 
 def cosine_similarity(left: Embedding, right: Embedding) -> float:

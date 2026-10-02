@@ -15,6 +15,13 @@ class FallbackRetriever:
     fallback_threshold: float
     _fallback: Retriever | None = field(default=None, init=False, repr=False)
 
+    def close(self) -> None:
+        """Close only already-initialized backends; never initialize fallback here."""
+        for retriever in (self.primary, self._fallback):
+            close = getattr(retriever, "close", None)
+            if close is not None:
+                close()
+
     def retrieve(
         self,
         question: str,

@@ -1,6 +1,8 @@
 """Loading and validation of local application configuration."""
 
 import os
+import re
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -65,6 +67,38 @@ class AuthConfig:
     issuer: str
     access_token_ttl_minutes: int
     cookie_secure: bool
+
+
+@dataclass(frozen=True)
+class VectorStoreConfig:
+    """Select the RAG backend independently of the embedding provider."""
+
+    backend: str
+    url: str
+    collection_prefix: str
+    timeout_seconds: int
+
+
+def load_vector_store_config(env: Mapping[str, str] | None = None) -> VectorStoreConfig:
+    environment = load_environment(env)
+    backend = environment.get("RAG_VECTOR_BACKEND", "json").strip().lower()
+    if backend not in {"json", "qdrant"}:
+        raise ConfigurationError("RAG_VECTOR_BACKEND must be json or qdrant.")
+    url = environment.get("QDRANT_URL", "http://127.0.0.1:6333").strip()
+    prefix = environment.get("QDRANT_COLLECTION_PREFIX", "ai_support").strip()
+    if backend == "qdrant":
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ConfigurationError("QDRANT_URL must be an HTTP or HTTPS URL.")
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", prefix):
+            raise ConfigurationError("QDRANT_COLLECTION_PREFIX must contain 1-64 letters, digits, underscores or hyphens.")
+    try:
+        timeout = int(environment.get("QDRANT_TIMEOUT_SECONDS", "10"))
+    except ValueError as error:
+        raise ConfigurationError("QDRANT_TIMEOUT_SECONDS must be an integer.") from error
+    if not 1 <= timeout <= 120:
+        raise ConfigurationError("QDRANT_TIMEOUT_SECONDS must be between 1 and 120.")
+    return VectorStoreConfig(backend, url, prefix, timeout)
 
 
 def load_environment(env: Mapping[str, str] | None = None) -> Mapping[str, str]:

@@ -12,6 +12,7 @@ from ai_support_agent.exceptions import (
     EmbeddingRequestError,
     InvalidModelResponseError,
     LlmRequestError,
+    VectorStoreError,
 )
 from ai_support_agent.rag.fallback_retriever import FallbackRetriever
 from ai_support_agent.rag.runtime import (
@@ -69,6 +70,9 @@ def main() -> None:
             print(format_result(evaluate_agent_run(case, run)))
     except ConfigurationError as error:
         print(f"Configuration error: {error}")
+    except VectorStoreError:
+        print("Векторная база недоступна. Проверьте контейнер Qdrant.")
+        return
     except (LlmRequestError, EmbeddingRequestError):
         print("Could not call the configured model or embedding service.")
     except InvalidModelResponseError:

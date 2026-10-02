@@ -3,6 +3,7 @@ from ai_support_agent.exceptions import (
     EmbeddingRequestError,
     InvalidModelResponseError,
     LlmRequestError,
+    VectorStoreError,
 )
 from ai_support_agent.assistant_service import AssistantService
 from ai_support_agent.conversation_service import ConversationService
@@ -54,6 +55,9 @@ def main() -> None:
     except ConfigurationError as error:
         print(f"Ошибка конфигурации: {error}")
         return
+    except VectorStoreError:
+        print("Векторная база недоступна. Проверьте контейнер Qdrant.")
+        return
     except (LlmRequestError, EmbeddingRequestError):
         print("Не удалось обратиться к LLM-сервису. Попробуйте позже.")
         return
@@ -78,6 +82,9 @@ def _run_gemini_dialogue(conversation: ConversationService) -> None:
             continue
         try:
             result = conversation.answer(question)
+        except VectorStoreError:
+            print("Векторная база недоступна. Проверьте контейнер Qdrant.")
+            continue
         except (LlmRequestError, EmbeddingRequestError):
             print("Не удалось обратиться к LLM-сервису. Попробуйте позже.")
             continue

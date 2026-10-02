@@ -77,3 +77,37 @@ def test_runtime_creates_a_separate_retriever_for_external_references(
         "consumer-exchange-return-v1",
             "consumer-remote-sales-rights-v1",
     }
+
+
+def test_runtime_selects_qdrant_and_reuses_its_collection(index_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from qdrant_client import QdrantClient
+    from ai_support_agent.rag.qdrant_store import QdrantVectorStore
+
+    qdrant = QdrantClient(":memory:")
+    connections = []
+
+    def create_client(**kwargs):
+        connections.append(kwargs)
+        return qdrant
+
+    monkeypatch.setattr("qdrant_client.QdrantClient", create_client)
+    env = {
+        "GEMINI_API_KEY": "test-key",
+        "GEMINI_EMBEDDING_MODEL": "test-embedding-model",
+        "RAG_VECTOR_BACKEND": "qdrant",
+        "QDRANT_URL": "http://127.0.0.1:6333",
+    }
+    embedding = FakeEmbeddingClient()
+    try:
+        first = create_gemini_vector_retriever(env, index_path=index_path, embedding_client=embedding)
+        assert isinstance(first.vector_store, QdrantVectorStore)
+        assert "_internal_" in first.vector_store.collection_name
+        calls_after_indexing = len(embedding.calls)
+        second = create_gemini_vector_retriever(env, index_path=index_path, embedding_client=embedding)
+        assert second.vector_store.collection_name == first.vector_store.collection_name
+        assert len(embedding.calls) == calls_after_indexing
+        assert len(second.retrieve("Refund", top_k=1, threshold=0.7)) == 1
+        assert not index_path.exists()
+        assert connections[0] == {"url": "http://127.0.0.1:6333", "timeout": 10}
+    finally:
+        qdrant.close()

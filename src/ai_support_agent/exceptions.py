@@ -10,6 +10,10 @@ class EmbeddingRequestError(RuntimeError):
     """The configured embedding provider could not create a vector."""
 
 
+class VectorStoreError(RuntimeError):
+    """The vector backend could not safely index or search knowledge."""
+
+
 class InvalidModelResponseError(RuntimeError):
     """LLM returned data that does not match the application's contract."""
 

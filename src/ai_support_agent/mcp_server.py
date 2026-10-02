@@ -5,7 +5,7 @@ from typing import Annotated, Any
 from mcp.server import MCPServer
 from pydantic import Field, ValidationError
 
-from ai_support_agent.exceptions import ConfigurationError, EmbeddingRequestError
+from ai_support_agent.exceptions import ConfigurationError, EmbeddingRequestError, VectorStoreError
 from ai_support_agent.rag.fallback_retriever import FallbackRetriever
 from ai_support_agent.rag.retriever import Retriever
 from ai_support_agent.rag.retriever import RetrievedChunk
@@ -241,7 +241,7 @@ def main() -> None:
 
     try:
         create_support_mcp_server(create_support_retriever()).run(transport="stdio")
-    except (ConfigurationError, EmbeddingRequestError) as error:
+    except (ConfigurationError, EmbeddingRequestError, VectorStoreError) as error:
         raise SystemExit(f"Unable to start Support MCP server: {error}") from error
 
 

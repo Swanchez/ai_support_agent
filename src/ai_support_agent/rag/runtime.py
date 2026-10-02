@@ -7,6 +7,7 @@ from ai_support_agent.config import (
     PROJECT_ROOT,
     load_environment,
     load_gemini_embedding_config,
+    load_vector_store_config,
 )
 from ai_support_agent.rag.embeddings import (
     GEMINI_EMBEDDING_DIMENSIONS,
@@ -44,6 +45,7 @@ def create_gemini_vector_retriever(
         env,
         index_path=index_path,
         embedding_client=embedding_client,
+        collection="internal",
     )
 
 
@@ -60,6 +62,7 @@ def create_external_reference_gemini_vector_retriever(
         env,
         index_path=index_path,
         embedding_client=embedding_client,
+        collection="external",
     )
 
 
@@ -69,6 +72,7 @@ def _create_gemini_vector_retriever_for_chunks(
     *,
     index_path: Path,
     embedding_client: EmbeddingClient | None,
+    collection: str,
 ) -> VectorRetriever:
     """Build one vector retriever from a supplied collection and its own cache file."""
 
@@ -81,10 +85,21 @@ def _create_gemini_vector_retriever_for_chunks(
         knowledge_base_fingerprint=knowledge_base_fingerprint(chunks),
         embedding_format_version=EMBEDDING_FORMAT_VERSION,
     )
-    vector_store = load_or_create_index(
-        index_path,
-        chunks,
-        client,
-        metadata,
-    )
+    store_config = load_vector_store_config(environment)
+    if store_config.backend == "qdrant":
+        from qdrant_client import QdrantClient
+        from ai_support_agent.rag.qdrant_store import collection_name, load_or_create_qdrant_index
+
+        qdrant = QdrantClient(url=store_config.url, timeout=store_config.timeout_seconds)
+        try:
+            vector_store = load_or_create_qdrant_index(
+                qdrant,
+                collection_name(store_config.collection_prefix, collection, metadata),
+                chunks, client, metadata, import_path=index_path,
+            )
+        except Exception:
+            qdrant.close()
+            raise
+    else:
+        vector_store = load_or_create_index(index_path, chunks, client, metadata)
     return VectorRetriever(client, vector_store)

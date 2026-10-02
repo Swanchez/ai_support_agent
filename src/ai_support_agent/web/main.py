@@ -94,6 +94,10 @@ def create_production_app() -> FastAPI:
         try:
             yield
         finally:
+            retriever = getattr(chat_service, "retriever", None)
+            close = getattr(retriever, "close", None)
+            if close is not None:
+                close()
             engine.dispose()
 
     app = create_app(

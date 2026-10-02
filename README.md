@@ -2,13 +2,13 @@
 
 Учебный pet-проект: ИИ-ассистент поддержки с LLM, RAG, tool calling, агентом и MCP.
 
-Проект построен по слоям: прикладная логика не зависит от интерфейса, а к ядру уже подключены CLI, FastAPI browser UI и MCP-клиент.
+Проект построен по слоям: прикладная логика не зависит от интерфейса, к ядру уже подключены CLI, FastAPI browser UI и MCP-клиент.
 
 ## Что реализовано
 
 - Gemini и OpenAI-клиенты за общим контрактом `LlmClient`; текущая практическая конфигурация использует Gemini.
 - Структурированный ответ `SupportResponse`, проверяемый Pydantic: статус, ответ, альтернатива, рекомендации и источники.
-- RAG по Markdown-политикам и PDF: chunking, embeddings Gemini, локальный векторный индекс, метаданные и source-aware fallback для внешних справочных материалов.
+- RAG по Markdown-политикам и PDF: chunking, embeddings Gemini, Qdrant или локальный JSON-индекс, метаданные и source-aware fallback для внешних справочных материалов.
 - Оценка retrieval и ответов: Recall@k, Precision@k, негативные кейсы и проверка источников.
 - Tools: список и статус заказов, отмена и заявка на возврат с подтверждением, валидация аргументов, ownership check и идемпотентность.
 - Безопасный audit tool-вызовов: actor, tool, эффект и outcome без raw arguments, prompt-ов или секретов.
@@ -26,7 +26,7 @@ AssistantService / AgentAssistantService
   |                         |
 RAG retriever           Tool catalog/executor
   |                         |
-vector index          OrderRepository + ToolExecutionContext
+Qdrant / JSON index   OrderRepository + ToolExecutionContext
   |
 Gemini embeddings
 
@@ -34,7 +34,7 @@ Gemini embeddings
 MCP client <-> stdio MCP server <-> тот же RAG retriever
 ```
 
-`service.py` собирает контекст для LLM и валидирует итоговый ответ. Он не хранит знания, не знает деталей Gemini SDK и не управляет CLI.
+`service.py` собирает контекст для LLM и валидирует итоговый ответ
 
 ## Структура
 
@@ -50,7 +50,7 @@ src/ai_support_agent/
   mcp_client.py # клиент, запускающий локальный MCP-сервер
   *_cli.py      # учебные консольные точки входа
 knowledge/      # Markdown-политики и PDF-источники
-data/           # кэшированные векторные индексы (не секреты)
+data/           # JSON-индексы для offline-backend и первичного импорта в Qdrant
 tests/          # unit- и интеграционные тесты без реальных API-вызовов
 ```
 
@@ -65,11 +65,10 @@ python -m pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
-В VS Code выбери интерпретатор из `.venv`. Это важно: CLI, тесты и дочерний MCP-процесс должны использовать одинаковое виртуальное окружение.
 
 ## Конфигурация и секреты
 
-В `.env` указывается один активный LLM-провайдер и параметры Gemini embeddings:
+В `.env` указывается один активный LLM-провайдер и параметры embeddings:
 
 ```dotenv
 LLM_PROVIDER=gemini
@@ -78,18 +77,12 @@ GEMINI_MODEL=gemini-3.5-flash-lite
 GEMINI_EMBEDDING_MODEL=gemini-embedding-2
 ```
 
-`.env` остаётся только на локальной машине и не коммитится. Не помещай ключи в исходный код, README, логи или скриншоты.
-
-LLM-вызовы и создание embeddings могут расходовать квоту провайдера. Unit-тесты используют заглушки и не должны обращаться к API; ручные CLI-команды и evaluation-команды — могут.
 
 ### Локальная PostgreSQL через Docker
 
 `compose.yaml` поднимает PostgreSQL 17 в контейнере `db`. Данные находятся в
 именованном Docker volume `postgres_data`, а порт опубликован только на
 `127.0.0.1:5432`, поэтому база не доступна из локальной сети.
-
-Добавь в существующий локальный `.env` значения из блока `POSTGRES_*` файла
-`.env.example`, заменив `POSTGRES_PASSWORD` на собственный пароль. Затем:
 
 ```powershell
 docker compose up -d db
@@ -103,15 +96,6 @@ docker compose logs db
 docker compose exec db psql -U ai_support_agent -d ai_support_agent
 ```
 
-Полезные команды `psql`: `\conninfo` — проверить подключение, `\dt` — список
-таблиц, `\d имя_таблицы` — структура таблицы, `\q` — выход. Для диагностики
-можно выполнять `SELECT`; изменение схемы вручную не используем — далее она
-будет контролироваться миграциями Alembic.
-
-`docker compose down` останавливает и удаляет контейнер, но сохраняет volume с
-данными. `docker compose down -v` удаляет и volume: это полное удаление локальной
-базы, применять его можно только осознанно.
-
 Проверка подключения из Python после установки зависимостей проекта:
 
 ```powershell
@@ -119,20 +103,14 @@ python -m ai_support_agent.persistence.check_connection
 ```
 
 Миграции схемы хранятся в `migrations/` и управляются Alembic. После изменения
-SQLAlchemy-моделей создай черновик миграции, проверь его и только затем примени:
+SQLAlchemy-моделей создаем черновик миграции, проверяем его и только затем применяем:
 
 ```powershell
 alembic revision --autogenerate -m "создать таблицу заказов"
 alembic upgrade head
 ```
 
-После применения миграции можно отдельно наполнить **только локальную** БД
-учебными заказами. Seed использует `ON CONFLICT DO NOTHING`, поэтому повторный
-запуск не создаёт дубликаты и не перезаписывает существующие строки:
 
-```powershell
-python -m ai_support_agent.persistence.seed_demo_orders
-```
 
 ## Основные команды
 
@@ -177,16 +155,15 @@ JWT остаётся в `HttpOnly` cookie и не показывается в и
 удаляется после 24 часов неактивности, а в LLM передаются лишь последние 8
 сообщений — это ограничивает рост контекста и расход токенов.
 
-Перед запуском подними локальную PostgreSQL и подготовь схему:
 
 ```powershell
-docker compose up -d db
+docker compose up -d db qdrant
 alembic upgrade head
 python -m ai_support_agent.persistence.seed_demo_orders
 python -m ai_support_agent.persistence.seed_demo_users
 ```
 
-Для JWT в локальном `.env` нужны следующие настройки. Секрет генерируется один раз, не коммитится и не выводится в логи:
+Для JWT в локальном `.env` нужны следующие настройки:
 
 ```dotenv
 AUTH_JWT_SECRET=at-least-32-random-characters
@@ -244,16 +221,55 @@ python -m ai_support_agent.inspect_pdf knowledge/pdf/remote_sales_return.pdf
 При создании или изменении базы знаний:
 
 1. Документы преобразуются в чанки с `document_id`, `chunk_id`, типом источника и номером страницы при наличии.
-2. Для чанков один раз строятся embeddings и сохраняются в `data/rag_index.json` или `data/external_reference_rag_index.json`.
-3. При вопросе создаётся embedding только вопроса; локальный vector store возвращает ближайшие чанки выше порога.
+2. Для чанков строятся embeddings. При `RAG_VECTOR_BACKEND=qdrant` они сохраняются в Qdrant вместе с текстом и метаданными; при `json` — в `data/rag_index.json` или `data/external_reference_rag_index.json`.
+3. При вопросе создаётся embedding только вопроса; выбранный vector store возвращает ближайшие чанки выше порога cosine similarity.
 4. В LLM передаются только найденные фрагменты, а `sources` заполняются приложением, а не моделью.
 
-Для внутренней базы текущий проверенный порог — `0.70`: на актуальном наборе
+Для внутренней базы текущий проверенный порог — `0.70`: на JSON-backend и актуальном наборе
 кейсов получены Recall@k = 1.00 и Precision@k = 1.00. Для внешней справочной
 коллекции также используется `0.70`: полнота равна 1.00, а precision ниже,
 потому что несколько близких юридических фрагментов могут быть полезны для
 одного вопроса. Это не универсальная константа: при смене embedding-модели,
 языка, структуры документов или коллекции порог нужно переоценивать.
+
+
+### Qdrant через Docker Compose
+
+Сервис `qdrant` использует закреплённый образ `qdrant/qdrant:v1.19.1`.
+Данные находятся в volume `qdrant_data`, snapshots — в `qdrant_snapshots`.
+REST API и dashboard опубликованы только на `127.0.0.1:6333`.
+
+Добавь в локальный `.env`:
+
+```dotenv
+RAG_VECTOR_BACKEND=qdrant
+QDRANT_URL=http://127.0.0.1:6333
+QDRANT_COLLECTION_PREFIX=ai_support
+QDRANT_TIMEOUT_SECONDS=10
+```
+
+Затем в активированном `.venv`:
+
+```powershell
+python -m pip install -e ".[dev]"
+docker compose up -d qdrant
+docker compose logs qdrant
+Invoke-RestMethod http://127.0.0.1:6333/readyz
+python -m ai_support_agent.rag.index_qdrant
+python -m ai_support_agent.evaluate_retrieval --thresholds 0.70 --details
+python -m ai_support_agent.evaluate_retrieval --collection external --thresholds 0.70 --details
+```
+
+Dashboard: `http://127.0.0.1:6333/dashboard`. Там видны коллекции,
+количество points, векторы и payload с текстом и метаданными.
+Для приложения, которое в будущем запускается внутри Compose, адрес будет
+`http://qdrant:6333`.
+
+Без `RAG_VECTOR_BACKEND` сохраняется прежний JSON-backend. Его также можно
+явно выбрать значением `json`. Недоступность Qdrant считается ошибкой сервиса,
+а не отсутствием релевантных знаний; HTTP API возвращает безопасный `503`.
+`docker compose down` сохраняет данные, а `down -v` удаляет также volumes
+Qdrant и PostgreSQL.
 
 ## Tools, agent и подтверждение
 
@@ -274,10 +290,7 @@ idempotency key, чтобы повтор не выполнил действие 
 ## CI
 
 `.github/workflows/tests.yml` запускает `pytest` в GitHub Actions на Ubuntu
-при каждом push в `main` и при pull request в `main`. В workflow нет ключей
-провайдеров и подключения к локальной БД: тесты используют заглушки и
-тестовые double-объекты. После push статус запуска виден во вкладке
-**Actions** репозитория GitHub.
+при каждом push в `main` и при pull request в `main`.
 
 ## MCP
 

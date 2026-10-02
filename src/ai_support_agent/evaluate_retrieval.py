@@ -2,7 +2,7 @@
 
 import argparse
 
-from ai_support_agent.exceptions import ConfigurationError, EmbeddingRequestError
+from ai_support_agent.exceptions import ConfigurationError, EmbeddingRequestError, VectorStoreError
 from ai_support_agent.service import (
     RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT,
     RETRIEVAL_TOP_K,
@@ -101,6 +101,9 @@ def main() -> None:
         )
     except ConfigurationError as error:
         print(f"Ошибка конфигурации: {error}")
+        return
+    except VectorStoreError:
+        print("Векторная база недоступна. Проверьте контейнер Qdrant.")
         return
     except EmbeddingRequestError:
         print("Не удалось создать embeddings для проверки retrieval. Попробуйте позже.")

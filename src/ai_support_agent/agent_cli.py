@@ -12,6 +12,7 @@ from ai_support_agent.exceptions import (
     EmbeddingRequestError,
     InvalidModelResponseError,
     LlmRequestError,
+    VectorStoreError,
 )
 from ai_support_agent.factory import create_gemini_confirmation_resolver
 from ai_support_agent.rag.fallback_retriever import FallbackRetriever
@@ -52,6 +53,9 @@ def main(debug: bool = False) -> None:
     except ConfigurationError as error:
         print(f"Ошибка конфигурации: {error}")
         return
+    except VectorStoreError:
+        print("Векторная база недоступна. Проверьте контейнер Qdrant.")
+        return
 
     print("Введите вопрос. Для выхода напишите: выход")
     while True:
@@ -70,6 +74,9 @@ def main(debug: bool = False) -> None:
 
         try:
             result = conversation.answer(user_message)
+        except VectorStoreError:
+            print("Векторная база недоступна. Проверьте контейнер Qdrant.")
+            continue
         except (LlmRequestError, EmbeddingRequestError):
             print("Не удалось обратиться к LLM-сервису. Попробуйте позже.")
             continue

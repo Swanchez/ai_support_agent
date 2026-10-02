@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from ai_support_agent.rag.embeddings import EmbeddingClient
 from ai_support_agent.rag.retriever import RetrievedChunk
-from ai_support_agent.rag.vector_store import InMemoryVectorStore
+from ai_support_agent.rag.vector_store import VectorStore
 
 
 @dataclass(frozen=True)
@@ -12,7 +12,13 @@ class VectorRetriever:
     """Embeds a question, then delegates local ranking to the vector store."""
 
     embedding_client: EmbeddingClient
-    vector_store: InMemoryVectorStore
+    vector_store: VectorStore
+
+    def close(self) -> None:
+        """Release backend connections, if the selected store owns any."""
+        close = getattr(self.vector_store, "close", None)
+        if close is not None:
+            close()
 
     def retrieve(
         self,

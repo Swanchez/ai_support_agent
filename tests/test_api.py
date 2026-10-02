@@ -11,6 +11,7 @@ from ai_support_agent.exceptions import (
     InvalidCredentialsError,
     InvalidModelResponseError,
     LlmRequestError,
+    VectorStoreError,
 )
 from ai_support_agent.exceptions import OrderNotFoundError
 from ai_support_agent.web.api import create_app
@@ -193,6 +194,14 @@ def test_chat_hides_an_invalid_model_response_from_the_client() -> None:
     assert response.json() == {
         "detail": "Не удалось обработать ответ сервиса. Попробуйте позже."
     }
+
+
+def test_chat_reports_vector_backend_failure_as_service_unavailable() -> None:
+    client = TestClient(create_test_app(FailingChatService(VectorStoreError("private Qdrant details"))))
+    response = client.post("/api/v1/chat", headers=AUTH_HEADERS, json={"message": "Refund?"})
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Сервис временно недоступен. Попробуйте позже."}
+    assert "Qdrant" not in response.text
 
 
 def test_openapi_documents_chat_runtime_error_contracts() -> None:

@@ -8,3 +8,6 @@ __pycache__/
 pytest-cache-files-*/
 tests/tmp*/
 data/*.json
+/python learn/
+/.codex/hooks.json
+/.codex/hooks.disabled.json

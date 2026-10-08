@@ -24,3 +24,6 @@ jobs:
 
       - name: Запустить тесты
         run: python -m pytest -q
+
+      - name: Проверить учебный harness без LLM
+        run: python -B -m pytest -q -p no:cacheprovider harness/tests

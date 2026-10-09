@@ -11,3 +11,6 @@ data/*.json
 /python learn/
 /.codex/hooks.json
 /.codex/hooks.disabled.json
+/.codex/config.toml
+/harness/hook-demo/
+/harness/test-tmp-protect-*/

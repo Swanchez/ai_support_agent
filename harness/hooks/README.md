@@ -1,5 +1,8 @@
 # Адаптер PreToolUse — проверен, временная конфигурация отключена
 
+Второй, отдельный обработчик для операций apply_patch:
+[PROTECT_FILES.md](PROTECT_FILES.md). Его конфигурация пока не активирована.
+
 Официальный контракт: https://learn.chatgpt.com/docs/hooks
 
 `pre_tool_use.py` читает событие JSON из stdin, возвращает только служебный JSON
